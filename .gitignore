@@ -30,8 +30,27 @@ yarn-error.*
 .DS_Store
 *.pem
 
+# Claude Code local settings (machine-specific, not for version control)
+.claude/settings.local.json
+
 # local env files
+.env
+.env.local
+.env.*.local
 .env*.local
+*.local
+
+# Local databases & SQLite artifacts
+*.db
+*.db-journal
+*.sqlite
+*.sqlite3
+.sqlite_history
+
+# Native build artifacts
+ios/.xcode.env.local
+android/.gradle
+android/app/build/
 
 # typescript
 *.tsbuildinfo

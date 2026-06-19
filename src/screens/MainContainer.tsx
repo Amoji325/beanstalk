@@ -28,6 +28,7 @@ import ScanBeanCapture from '@src/components/capture/ScanBeanCapture';
 import TypeBeanCapture from '@src/components/capture/TypeBeanCapture';
 import VoiceBeanCapture from '@src/components/capture/VoiceBeanCapture';
 import PhotoBeanCapture from '@src/components/capture/PhotoBeanCapture';
+import { useAuth } from '@clerk/expo';
 import { insertBean, updateBean, syncLocalBeanToCloud } from '@src/database';
 import { useBeans } from '@src/hooks/useBeans';
 import { useDeviceShake } from '@src/hooks/useDeviceShake';
@@ -234,6 +235,10 @@ function GardenLayer({
  *   Dial pan   → failOffsetY([-10, 10])  (won't activate on vertical drags)
  */
 export default function MainContainer() {
+  // Clerk-verified user ID — guaranteed non-null here because RootGate only
+  // renders MainContainer when isSignedIn === true.
+  const { userId } = useAuth();
+
   // Active stalk + its biome theme drive data loading and the entire canvas.
   const { activeStalkId, biome } = useStalk();
 
@@ -298,11 +303,12 @@ export default function MainContainer() {
       await refresh();
       // Fire-and-forget — UI is already updated. If offline, is_synced stays
       // false and syncPendingBeans() will retry on next connectivity event.
-      syncLocalBeanToCloud(saved);
+      // userId is always a non-null string here (RootGate guards this path).
+      if (userId) syncLocalBeanToCloud(saved, userId);
     } catch (e) {
       console.warn('[Beanstalk] insertBean failed:', e);
     }
-  }, [refresh]);
+  }, [refresh, userId]);
 
   // ── Bean update handler — patches DB then refreshes vine ─────────────────
 

@@ -3,12 +3,6 @@ import { fetchUnsyncedBeans, markBeanSynced } from './db';
 import { uploadMediaFile } from './storage';
 import type { Bean } from '@src/types';
 
-// ─── Constants ────────────────────────────────────────────────────────────────
-
-// Placeholder until Clerk auth lands in Phase 3. At that point replace with
-// the authenticated user's ID and add a WHERE user_id = auth.uid() RLS policy.
-const PLACEHOLDER_USER_ID = 'local-dev-user';
-
 // ─── Local URI detection ──────────────────────────────────────────────────────
 
 /**
@@ -51,7 +45,7 @@ async function resolveMediaUris(bean: Bean): Promise<Bean> {
 
 // ─── Mapper ───────────────────────────────────────────────────────────────────
 
-function beanToCloudRecord(bean: Bean) {
+function beanToCloudRecord(bean: Bean, userId: string) {
   return {
     id:           bean.id,
     stalk_id:     bean.stalkId,
@@ -61,7 +55,7 @@ function beanToCloudRecord(bean: Bean) {
     created_at:   new Date(bean.createdAt).toISOString(),
     // Last-write-wins anchor — always set so future bidirectional sync can compare.
     updated_at:   new Date(bean.updatedAt ?? bean.createdAt).toISOString(),
-    user_id:      PLACEHOLDER_USER_ID,
+    user_id:      userId,
 
     // Type bean
     text_content: bean.textContent ?? null,
@@ -107,12 +101,12 @@ function beanToCloudRecord(bean: Bean) {
  *
  * Throws on any failure so callers can leave is_synced = 0 for retry.
  */
-async function pushBeanToCloud(bean: Bean): Promise<void> {
+async function pushBeanToCloud(bean: Bean, userId: string): Promise<void> {
   const resolved = await resolveMediaUris(bean);
 
   const { error } = await supabase
     .from('beans')
-    .upsert(beanToCloudRecord(resolved), { onConflict: 'id' });
+    .upsert(beanToCloudRecord(resolved, userId), { onConflict: 'id' });
 
   if (error) throw error;
 
@@ -126,10 +120,12 @@ async function pushBeanToCloud(bean: Bean): Promise<void> {
  * after a successful local insert — keeps the UI instant.
  * On any failure (offline, storage error, DB error) leaves is_synced = 0
  * so the pending sweep retries the full pipeline when connectivity returns.
+ *
+ * @param userId - Clerk's verified user ID, used as the RLS ownership key.
  */
-export async function syncLocalBeanToCloud(bean: Bean): Promise<void> {
+export async function syncLocalBeanToCloud(bean: Bean, userId: string): Promise<void> {
   try {
-    await pushBeanToCloud(bean);
+    await pushBeanToCloud(bean, userId);
   } catch (err) {
     console.warn('[Sync] bean deferred (will retry):', err);
   }
@@ -140,8 +136,12 @@ export async function syncLocalBeanToCloud(bean: Bean): Promise<void> {
  * upload + upsert pipeline. Returns a tally of synced vs. deferred.
  *
  * Call this on app foreground or network reconnect events.
+ *
+ * @param userId  - Clerk's verified user ID, used as the RLS ownership key.
+ * @param stalkId - Optional stalk filter for a targeted retry pass.
  */
 export async function syncPendingBeans(
+  userId: string,
   stalkId?: string
 ): Promise<{ synced: number; failed: number }> {
   const pending = await fetchUnsyncedBeans(stalkId);
@@ -150,7 +150,7 @@ export async function syncPendingBeans(
 
   for (const bean of pending) {
     try {
-      await pushBeanToCloud(bean);
+      await pushBeanToCloud(bean, userId);
       synced++;
     } catch {
       failed++;

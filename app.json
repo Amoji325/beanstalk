@@ -30,7 +30,9 @@
         {
           "photosPermission": "Beanstalk accesses your photo library so you can add images and scanned pages to your diary."
         }
-      ]
+      ],
+      "@clerk/expo",
+      "expo-secure-store"
     ]
   }
 }

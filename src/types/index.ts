@@ -85,6 +85,16 @@ export interface Bean {
   /** Whether this bean has been flagged and hidden from the Safe-Shake Filter. */
   safeShakeHidden?: boolean;
   updatedAt?: number;
+
+  // ── AI classification ──────────────────────────────────────────────────────
+  /** Sentiment score from on-device AI classification [0.0 = negative, 1.0 = positive]. */
+  aiSentiment?:  number;
+  /** Emotional intensity index from on-device AI classification [0.0 = calm, 1.0 = intense]. */
+  aiIntensity?:  number;
+  /** Model prediction confidence [0.0, 1.0]. Lower values indicate the rule-based fallback ran. */
+  aiConfidence?: number;
+  /** Semantic tags assigned by on-device AI classification (e.g. ['gratitude', 'health']). */
+  aiTags?:       string[];
 }
 
 // ─── Stalk / Biome Types ─────────────────────────────────────────────────────

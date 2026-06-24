@@ -41,6 +41,11 @@ interface BeanRow {
   title: string | null;
   /** 1 = favourited (ladybug), 0 = normal. */
   is_favorite: number;
+  // AI classification columns
+  ai_sentiment:  number | null;
+  ai_intensity:  number | null;
+  ai_confidence: number | null;
+  ai_tags:       string | null; // JSON-serialised string[]
 }
 
 /**
@@ -201,6 +206,11 @@ function rowToBean(row: BeanRow): Bean {
     vinePositionOffset: extended.vinePositionOffset,
     safeShakeHidden: extended.safeShakeHidden,
     updatedAt: extended.updatedAt,
+
+    aiSentiment:  row.ai_sentiment  ?? undefined,
+    aiIntensity:  row.ai_intensity  ?? undefined,
+    aiConfidence: row.ai_confidence ?? undefined,
+    aiTags:       row.ai_tags ? (JSON.parse(row.ai_tags) as string[]) : undefined,
   };
 }
 
@@ -219,6 +229,10 @@ function beanToRow(
   extendedData: string;
   title: string | null;
   is_favorite: number;
+  ai_sentiment:  number | null;
+  ai_intensity:  number | null;
+  ai_confidence: number | null;
+  ai_tags:       string | null;
 } {
   // Map the primary text content column by type.
   let contentText: string | null = null;
@@ -264,6 +278,10 @@ function beanToRow(
     extendedData: JSON.stringify(cleanExtended),
     title: bean.title ?? null,
     is_favorite: bean.isFavorite ? 1 : 0,
+    ai_sentiment:  bean.aiSentiment  ?? null,
+    ai_intensity:  bean.aiIntensity  ?? null,
+    ai_confidence: bean.aiConfidence ?? null,
+    ai_tags:       bean.aiTags ? JSON.stringify(bean.aiTags) : null,
   };
 }
 
@@ -323,6 +341,22 @@ export async function initializeDatabase(): Promise<void> {
     await db.execAsync('ALTER TABLE beans ADD COLUMN sync_pending_at INTEGER');
   } catch { /* already present */ }
 
+  try {
+    await db.execAsync('ALTER TABLE beans ADD COLUMN ai_sentiment REAL');
+  } catch { /* already present */ }
+
+  try {
+    await db.execAsync('ALTER TABLE beans ADD COLUMN ai_intensity REAL');
+  } catch { /* already present */ }
+
+  try {
+    await db.execAsync('ALTER TABLE beans ADD COLUMN ai_confidence REAL');
+  } catch { /* already present */ }
+
+  try {
+    await db.execAsync('ALTER TABLE beans ADD COLUMN ai_tags TEXT');
+  } catch { /* already present */ }
+
   // Seed the default stalk only if it doesn't already exist.
   const existing = await db.getFirstAsync<{ id: string }>(
     'SELECT id FROM stalks WHERE id = ?',
@@ -348,6 +382,16 @@ export function ensureDatabaseInitialized(): Promise<void> {
   if (!_initPromise) _initPromise = initializeDatabase();
   return _initPromise;
 }
+
+// ─── Shared column list ───────────────────────────────────────────────────────
+// All bean SELECT queries project the same columns so BeanRow is always fully
+// populated. Update here when new columns are added to the beans table.
+
+const BEAN_COLS = `
+  id, stalkId, type, contentText, mediaUri, transcriptionText,
+  timestamp, sentimentScore, extendedData, title, is_favorite,
+  ai_sentiment, ai_intensity, ai_confidence, ai_tags
+`;
 
 // ─── Stalk CRUD ───────────────────────────────────────────────────────────────
 
@@ -407,11 +451,7 @@ export async function deleteStalk(id: string): Promise<void> {
 export async function fetchBeansForStalk(stalkId: string): Promise<Bean[]> {
   const db = await getDb();
   const rows = await db.getAllAsync<BeanRow>(
-    `SELECT id, stalkId, type, contentText, mediaUri, transcriptionText,
-            timestamp, sentimentScore, extendedData, title, is_favorite
-     FROM beans
-     WHERE stalkId = ?
-     ORDER BY timestamp ASC`,
+    `SELECT ${BEAN_COLS} FROM beans WHERE stalkId = ? ORDER BY timestamp ASC`,
     [stalkId]
   );
   return rows.map(rowToBean);
@@ -430,8 +470,9 @@ export async function insertBean(bean: Omit<Bean, 'id'>): Promise<Bean> {
     `INSERT INTO beans
        (id, stalkId, type, contentText, mediaUri, transcriptionText,
         timestamp, sentimentScore, extendedData, title, is_favorite,
-        is_synced, sync_pending_at)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?)`,
+        is_synced, sync_pending_at,
+        ai_sentiment, ai_intensity, ai_confidence, ai_tags)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?, ?, ?, ?)`,
     [
       row.id,
       row.stalkId,
@@ -445,6 +486,10 @@ export async function insertBean(bean: Omit<Bean, 'id'>): Promise<Bean> {
       row.title,
       row.is_favorite,
       Date.now(),
+      row.ai_sentiment,
+      row.ai_intensity,
+      row.ai_confidence,
+      row.ai_tags,
     ]
   );
 
@@ -468,6 +513,10 @@ export async function updateBean(
       | 'safeShakeHidden'
       | 'vinePositionOffset'
       | 'isFavorite'
+      | 'aiSentiment'
+      | 'aiIntensity'
+      | 'aiConfidence'
+      | 'aiTags'
     >
   >
 ): Promise<void> {
@@ -505,6 +554,22 @@ export async function updateBean(
     sql += ', is_favorite = ?';
     values.push(patch.isFavorite ? 1 : 0);
   }
+  if (patch.aiSentiment !== undefined) {
+    sql += ', ai_sentiment = ?';
+    values.push(patch.aiSentiment ?? null);
+  }
+  if (patch.aiIntensity !== undefined) {
+    sql += ', ai_intensity = ?';
+    values.push(patch.aiIntensity ?? null);
+  }
+  if (patch.aiConfidence !== undefined) {
+    sql += ', ai_confidence = ?';
+    values.push(patch.aiConfidence ?? null);
+  }
+  if (patch.aiTags !== undefined) {
+    sql += ', ai_tags = ?';
+    values.push(patch.aiTags ? JSON.stringify(patch.aiTags) : null);
+  }
   sql += ' WHERE id = ?';
   values.push(id);
 
@@ -531,19 +596,11 @@ export async function fetchUnsyncedBeans(stalkId?: string): Promise<Bean[]> {
   const db = await getDb();
   const rows = stalkId
     ? await db.getAllAsync<BeanRow>(
-        `SELECT id, stalkId, type, contentText, mediaUri, transcriptionText,
-                timestamp, sentimentScore, extendedData, title, is_favorite
-         FROM beans
-         WHERE is_synced = 0 AND stalkId = ?
-         ORDER BY timestamp ASC`,
+        `SELECT ${BEAN_COLS} FROM beans WHERE is_synced = 0 AND stalkId = ? ORDER BY timestamp ASC`,
         [stalkId]
       )
     : await db.getAllAsync<BeanRow>(
-        `SELECT id, stalkId, type, contentText, mediaUri, transcriptionText,
-                timestamp, sentimentScore, extendedData, title, is_favorite
-         FROM beans
-         WHERE is_synced = 0
-         ORDER BY timestamp ASC`
+        `SELECT ${BEAN_COLS} FROM beans WHERE is_synced = 0 ORDER BY timestamp ASC`
       );
   return rows.map(rowToBean);
 }
@@ -558,11 +615,7 @@ export async function deleteBean(id: string): Promise<void> {
 export async function fetchFavoriteBeans(stalkId: string): Promise<Bean[]> {
   const db = await getDb();
   const rows = await db.getAllAsync<BeanRow>(
-    `SELECT id, stalkId, type, contentText, mediaUri, transcriptionText,
-            timestamp, sentimentScore, extendedData, title, is_favorite
-     FROM beans
-     WHERE stalkId = ? AND is_favorite = 1
-     ORDER BY timestamp ASC`,
+    `SELECT ${BEAN_COLS} FROM beans WHERE stalkId = ? AND is_favorite = 1 ORDER BY timestamp ASC`,
     [stalkId]
   );
   return rows.map(rowToBean);
@@ -578,9 +631,7 @@ export async function fetchRandomBean(
 ): Promise<Bean | null> {
   const db = await getDb();
   const row = await db.getFirstAsync<BeanRow>(
-    `SELECT id, stalkId, type, contentText, mediaUri, transcriptionText,
-            timestamp, sentimentScore, extendedData, title, is_favorite
-     FROM beans
+    `SELECT ${BEAN_COLS} FROM beans
      WHERE stalkId = ?
        AND (extendedData IS NULL OR extendedData NOT LIKE '%"safeShakeHidden":true%')
        ${excludeId ? 'AND id != ?' : ''}

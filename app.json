@@ -32,7 +32,8 @@
         }
       ],
       "@clerk/expo",
-      "expo-secure-store"
+      "expo-secure-store",
+      "onnxruntime-react-native"
     ]
   }
 }

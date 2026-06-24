@@ -353,17 +353,32 @@ export default function MainContainer() {
   }, [refresh, userId]);
 
   // ── Bean update handler — patches DB then refreshes vine ─────────────────
+  // Also handles post-transcription AI classification: when a completed
+  // transcription lands on a bean that was never classified (aiSentiment == null),
+  // the same background inference pipeline used at capture time fires automatically.
 
   const handleBeanUpdate = useCallback(
-    async (id: string, patch: Partial<Pick<Bean, 'title' | 'isFavorite'>>) => {
+    async (
+      id: string,
+      patch: Partial<Pick<Bean, 'title' | 'isFavorite' | 'transcription' | 'transcriptionStatus'>>,
+    ) => {
       try {
         await updateBean(id, patch);
         await refresh();
+
+        if (patch.transcription && userId) {
+          const existing = beans.find(b => b.id === id);
+          if (existing && existing.aiSentiment == null) {
+            runAiClassification(existing, patch.transcription, userId).catch((err) => {
+              console.warn('[AI] Post-transcription classification failed:', err);
+            });
+          }
+        }
       } catch (e) {
         console.warn('[Beanstalk] updateBean failed:', e);
       }
     },
-    [refresh]
+    [refresh, userId, beans],
   );
 
   // ── Soil dismiss pan gesture ─────────────────────────────────────────────

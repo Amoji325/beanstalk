@@ -1,4 +1,4 @@
-import React, { useCallback, useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import {
   Dimensions,
   StyleSheet,
@@ -30,6 +30,7 @@ import VoiceBeanCapture from '@src/components/capture/VoiceBeanCapture';
 import PhotoBeanCapture from '@src/components/capture/PhotoBeanCapture';
 import { useAuth } from '@clerk/expo';
 import { insertBean, updateBean, syncLocalBeanToCloud } from '@src/database';
+import { LocalAiEngine } from '@src/ai/pipeline';
 import { useBeans } from '@src/hooks/useBeans';
 import { useDeviceShake } from '@src/hooks/useDeviceShake';
 import { useShakeMemory } from '@src/hooks/useShakeMemory';
@@ -51,6 +52,32 @@ const SPRING_CONFIG = {
 
 const COMMIT_THRESHOLD = SCREEN_HEIGHT * 0.25;
 const COMMIT_VELOCITY  = 600;
+
+// ─── AI background worker ─────────────────────────────────────────────────────
+// Runs after insertBean resolves. Never awaited by the caller — the UI is
+// already updated before this starts. On any failure the local row simply
+// retains null ai_* fields; no user-visible side-effect occurs.
+
+async function runAiClassification(saved: Bean, text: string, userId: string): Promise<void> {
+  const result = await LocalAiEngine.classifyJournalText(text);
+  await updateBean(saved.id, {
+    aiSentiment:  result.sentiment,
+    aiIntensity:  result.emotionalIndex,
+    aiConfidence: result.confidence,
+    aiTags:       result.tags,
+  });
+  // Re-sync the enriched record so Supabase receives the ai_* columns.
+  syncLocalBeanToCloud(
+    {
+      ...saved,
+      aiSentiment:  result.sentiment,
+      aiIntensity:  result.emotionalIndex,
+      aiConfidence: result.confidence,
+      aiTags:       result.tags,
+    },
+    userId,
+  );
+}
 
 // ─── Active Capture Panel ─────────────────────────────────────────────────────
 
@@ -276,6 +303,10 @@ export default function MainContainer() {
     enabled: gardenVisible && memory === null,
   });
 
+  // Warm the ONNX session once on mount. initializeEngine() is idempotent and
+  // silently degrades to the rule-based fallback if the model is absent.
+  useEffect(() => { LocalAiEngine.initializeEngine(); }, []);
+
   const soilTranslateY = useSharedValue(0);
   const dragStartY     = useSharedValue(0);
 
@@ -299,12 +330,23 @@ export default function MainContainer() {
 
   const handleCapture = useCallback(async (bean: Omit<Bean, 'id'>) => {
     try {
+      // 1. Persist locally — ai_* fields are null until the background pass fills them in.
       const saved = await insertBean(bean);
+
+      // 2. Refresh the vine immediately so the user sees their new entry at once.
       await refresh();
-      // Fire-and-forget — UI is already updated. If offline, is_synced stays
-      // false and syncPendingBeans() will retry on next connectivity event.
-      // userId is always a non-null string here (RootGate guards this path).
+
+      // 3. Push the initial record to Supabase (fire-and-forget; retries on reconnect).
       if (userId) syncLocalBeanToCloud(saved, userId);
+
+      // 4. Background AI classification — never blocks the UI thread.
+      //    Classifiable text: prefer typed/scanned content, fall back to transcription.
+      const text = bean.textContent ?? bean.scannedText ?? bean.transcription ?? '';
+      if (text.trim() && userId) {
+        runAiClassification(saved, text, userId).catch((err) => {
+          console.warn('[AI] Background classification failed:', err);
+        });
+      }
     } catch (e) {
       console.warn('[Beanstalk] insertBean failed:', e);
     }

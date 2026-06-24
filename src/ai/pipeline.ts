@@ -14,7 +14,7 @@ export interface AiClassification {
 // ─── Constants ────────────────────────────────────────────────────────────────
 
 const MAX_SEQ_LEN = 256;
-const ASCII_NORM  = 128.0; // normalize char codes to [0, ~1]
+const VOCAB_SIZE  = 30522; // standard WordPiece vocab size (bert-base-uncased)
 
 // Tag labels — must match the model's output logit order when a real model is wired in.
 const TAG_LABELS: readonly string[] = [
@@ -28,14 +28,18 @@ const TAG_LABELS: readonly string[] = [
 const MODEL_MODULE: number | null = null;
 
 // ─── Tokenizer ────────────────────────────────────────────────────────────────
-// Character-level ASCII mapping: each character → code / ASCII_NORM, clamped to [0, 1].
+// Character-code vocabulary mapping: each character → its Unicode code point,
+// clamped to [0, VOCAB_SIZE - 1] so it fits within the model's embedding table.
+// Token ID 0 is used as the PAD token for positions beyond the input length.
 // Sequences are truncated to MAX_SEQ_LEN; shorter sequences are zero-padded at the tail.
+// Replace this function with a proper subword tokenizer (e.g. BPE, WordPiece)
+// once a vocabulary file ships alongside the .onnx model weights.
 
-function tokenize(text: string): Float32Array {
-  const buf = new Float32Array(MAX_SEQ_LEN); // zero-initialized by default
+function tokenize(text: string): Int32Array {
+  const buf = new Int32Array(MAX_SEQ_LEN); // zero-initialized → PAD token
   const len = Math.min(text.length, MAX_SEQ_LEN);
   for (let i = 0; i < len; i++) {
-    buf[i] = Math.min(text.charCodeAt(i) / ASCII_NORM, 1.0);
+    buf[i] = Math.min(text.charCodeAt(i), VOCAB_SIZE - 1);
   }
   return buf;
 }
@@ -153,7 +157,7 @@ export const LocalAiEngine = {
 
     try {
       const tokens  = tokenize(text);
-      const tensor  = new ort.Tensor('float32', tokens, [1, MAX_SEQ_LEN]);
+      const tensor  = new ort.Tensor('int32', tokens, [1, MAX_SEQ_LEN]);
       const inputName = _state.session.inputNames[0];
       const results = await _state.session.run({ [inputName]: tensor });
 

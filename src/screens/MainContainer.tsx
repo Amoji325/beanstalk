@@ -362,17 +362,21 @@ export default function MainContainer() {
       id: string,
       patch: Partial<Pick<Bean, 'title' | 'isFavorite' | 'transcription' | 'transcriptionStatus'>>,
     ) => {
+      // Snapshot the bean BEFORE any awaits so we read synchronous state,
+      // not potentially-stale state after React re-renders from refresh().
+      const existing = beans.find(b => b.id === id);
+
       try {
         await updateBean(id, patch);
         await refresh();
 
-        if (patch.transcription && userId) {
-          const existing = beans.find(b => b.id === id);
-          if (existing && existing.aiSentiment == null) {
-            runAiClassification(existing, patch.transcription, userId).catch((err) => {
-              console.warn('[AI] Post-transcription classification failed:', err);
-            });
-          }
+        if (patch.transcription && userId && existing && existing.aiSentiment == null) {
+          // Merge patch into the pre-update snapshot so runAiClassification
+          // receives a fully unified bean (fresh transcription + all existing fields).
+          const updatedBean: Bean = { ...existing, ...patch };
+          runAiClassification(updatedBean, patch.transcription, userId).catch((err) => {
+            console.warn('[AI] Post-transcription classification failed:', err);
+          });
         }
       } catch (e) {
         console.warn('[Beanstalk] updateBean failed:', e);

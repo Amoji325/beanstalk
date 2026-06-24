@@ -210,7 +210,11 @@ function rowToBean(row: BeanRow): Bean {
     aiSentiment:  row.ai_sentiment  ?? undefined,
     aiIntensity:  row.ai_intensity  ?? undefined,
     aiConfidence: row.ai_confidence ?? undefined,
-    aiTags:       row.ai_tags ? (JSON.parse(row.ai_tags) as string[]) : undefined,
+    aiTags: (() => {
+      if (!row.ai_tags) return undefined;
+      try { return JSON.parse(row.ai_tags) as string[]; }
+      catch { return []; }
+    })(),
   };
 }
 

@@ -88,6 +88,12 @@ function beanToCloudRecord(bean: Bean, userId: string) {
     nutrient_split_primary_stalk_id:   bean.nutrientSplit?.primaryStalkId ?? null,
     nutrient_split_secondary_stalk_id: bean.nutrientSplit?.secondaryStalkId ?? null,
     nutrient_split_primary_weight:     bean.nutrientSplit?.primaryWeight ?? null,
+
+    // On-device AI classification — null when not yet computed
+    ai_sentiment:  bean.aiSentiment  ?? null,
+    ai_intensity:  bean.aiIntensity  ?? null,
+    ai_confidence: bean.aiConfidence ?? null,
+    ai_tags:       bean.aiTags ? JSON.stringify(bean.aiTags) : null,
   };
 }
 

@@ -1,4 +1,4 @@
-import React, { useEffect } from 'react';
+import React, { useEffect, useMemo } from 'react';
 import { StyleSheet, Text, View } from 'react-native';
 import Animated, {
   Easing,
@@ -9,6 +9,8 @@ import Animated, {
 } from 'react-native-reanimated';
 import type { Bean } from '@src/types';
 import type { VineColors } from '@src/components/HistoryVine';
+import { GardenEvolution } from '@src/components/analytics/GardenEvolution';
+import { calculateStalkEvolution } from '@src/utils/botanyEngine';
 
 // ─── Semantic Analytics ───────────────────────────────────────────────────────
 // On-device AI classification display: sentiment + intensity mood bars and an
@@ -97,61 +99,74 @@ function AnalyzingSkeleton({ c }: { c: VineColors }) {
 }
 
 export function SemanticAnalytics({ bean, c }: { bean: Bean; c: VineColors }) {
+  // Stalk visual state for the garden canvas. Hook must run before any early
+  // return. NOTE: derived from this single bean for now — wiring the full stalk
+  // history in is a later stage; the Stage-2 dev slider overrides these values.
+  const stalkState = useMemo(() => calculateStalkEvolution([bean]), [bean]);
+
   // `== null` catches both null (DB) and undefined (in-memory unclassified).
   const hasAi = bean.aiSentiment != null;
   const willClassify =
     !!(bean.textContent || bean.scannedText || bean.transcription) || bean.type === 'voice';
 
-  // Media-only entries (e.g. a photo with no caption) are never classified —
-  // render nothing rather than an eternal shimmer.
-  if (!hasAi && !willClassify) return null;
-
-  // Pending: fresh entry awaiting on-device inference or a transcription.
-  if (!hasAi) return <AnalyzingSkeleton c={c} />;
-
   const aiTags = bean.aiTags ?? [];
 
-  return (
-    <View style={semanticStyles.root}>
-      <Text style={[semanticStyles.sectionTitle, { color: c.textSecondary }]}>ATMOSPHERE</Text>
+  // The analytics body below the garden: computed metrics, a pending shimmer,
+  // or nothing (media-only entries that will never be classified).
+  let body: React.ReactNode = null;
+  if (hasAi) {
+    body = (
+      <View style={semanticStyles.root}>
+        <Text style={[semanticStyles.sectionTitle, { color: c.textSecondary }]}>ATMOSPHERE</Text>
 
-      <MoodBar
-        label="Sentiment"
-        value={bean.aiSentiment ?? 0}
-        lowColor={SENTIMENT_LOW}
-        highColor={SENTIMENT_HIGH}
-        c={c}
-      />
-      <MoodBar
-        label="Intensity"
-        value={bean.aiIntensity ?? 0}
-        lowColor={INTENSITY_LOW}
-        highColor={INTENSITY_HIGH}
-        c={c}
-      />
+        <MoodBar
+          label="Sentiment"
+          value={bean.aiSentiment ?? 0}
+          lowColor={SENTIMENT_LOW}
+          highColor={SENTIMENT_HIGH}
+          c={c}
+        />
+        <MoodBar
+          label="Intensity"
+          value={bean.aiIntensity ?? 0}
+          lowColor={INTENSITY_LOW}
+          highColor={INTENSITY_HIGH}
+          c={c}
+        />
 
-      {aiTags.length > 0 && (
-        <View style={semanticStyles.tagCloud}>
-          {aiTags.map((tag, index) => (
-            <View
-              key={index}
-              style={[
-                semanticStyles.tagPill,
-                { borderColor: `${c.accent}66`, backgroundColor: `${c.accent}14` },
-              ]}
-            >
-              <Text
-                style={[semanticStyles.tagText, { color: c.textPrimary }]}
-                numberOfLines={1}
-                ellipsizeMode="tail"
+        {aiTags.length > 0 && (
+          <View style={semanticStyles.tagCloud}>
+            {aiTags.map((tag, index) => (
+              <View
+                key={index}
+                style={[
+                  semanticStyles.tagPill,
+                  { borderColor: `${c.accent}66`, backgroundColor: `${c.accent}14` },
+                ]}
               >
-                {tag}
-              </Text>
-            </View>
-          ))}
-        </View>
-      )}
-    </View>
+                <Text
+                  style={[semanticStyles.tagText, { color: c.textPrimary }]}
+                  numberOfLines={1}
+                  ellipsizeMode="tail"
+                >
+                  {tag}
+                </Text>
+              </View>
+            ))}
+          </View>
+        )}
+      </View>
+    );
+  } else if (willClassify) {
+    // Pending: fresh entry awaiting on-device inference or a transcription.
+    body = <AnalyzingSkeleton c={c} />;
+  }
+
+  return (
+    <>
+      <GardenEvolution state={stalkState} c={c} />
+      {body}
+    </>
   );
 }
 

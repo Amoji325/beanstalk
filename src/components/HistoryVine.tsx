@@ -26,7 +26,6 @@ import Animated, {
   withTiming,
 } from 'react-native-reanimated';
 import { useAudioPlayer, useAudioPlayerStatus } from 'expo-audio';
-import { SemanticAnalytics } from '@src/components/analytics/SemanticAnalytics';
 import type { Bean, BeanType } from '@src/types';
 import type { BiomeConfig } from '@src/constants';
 
@@ -89,7 +88,7 @@ function podRadius(side: 'left' | 'right'): PodRadius {
 }
 
 /** Flat colour bundle derived once per biome and threaded into every row. */
-export interface VineColors {
+interface VineColors {
   canvas: string;
   trunk: string;
   knot: string;
@@ -1487,7 +1486,6 @@ export function EntryInspectSheet({ bean, biome, onClose, onUpdate }: EntryInspe
           keyboardShouldPersistTaps="handled"
         >
           <BeanInspectBody bean={bean} c={c} />
-          <SemanticAnalytics bean={bean} c={c} />
         </ScrollView>
       </Animated.View>
     </Animated.View>

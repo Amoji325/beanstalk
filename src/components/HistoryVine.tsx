@@ -1,4 +1,12 @@
-import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import React, {
+  forwardRef,
+  useCallback,
+  useEffect,
+  useImperativeHandle,
+  useMemo,
+  useRef,
+  useState,
+} from 'react';
 import {
   Dimensions,
   FlatList,
@@ -634,7 +642,16 @@ interface HistoryVineProps {
   onPressBean?: (bean: Bean) => void;
 }
 
-export default function HistoryVine({ beans, loading, biome, onPressBean }: HistoryVineProps) {
+/** Imperative handle so parents (e.g. the flashback "jump to timeline" action)
+ *  can scroll the vine to a specific bean without owning the list internals. */
+export interface HistoryVineHandle {
+  scrollToBean: (beanId: string) => void;
+}
+
+const HistoryVine = forwardRef<HistoryVineHandle, HistoryVineProps>(function HistoryVine(
+  { beans, loading, biome, onPressBean },
+  ref
+) {
   const listRef = useRef<FlatList<VineItem>>(null);
   // Tracks the user's current scroll position so we only auto-snap to the
   // newest entry when they're already near the bottom (offset 0 in an inverted
@@ -675,6 +692,20 @@ export default function HistoryVine({ beans, loading, biome, onPressBean }: Hist
   );
 
   const keyExtractor = useCallback((item: VineItem) => item.bean.id, []);
+
+  // Expose an imperative scroll so the flashback overlay can snap the timeline
+  // to a recalled memory. Centres the row; no-op if it isn't in the current list.
+  useImperativeHandle(
+    ref,
+    () => ({
+      scrollToBean: (beanId: string) => {
+        const index = vineItems.findIndex((v) => v.bean.id === beanId);
+        if (index < 0) return;
+        listRef.current?.scrollToIndex({ index, animated: true, viewPosition: 0.5 });
+      },
+    }),
+    [vineItems]
+  );
 
   const handlePressBean = useCallback(
     (bean: Bean) => { onPressBean?.(bean); },
@@ -731,10 +762,18 @@ export default function HistoryVine({ beans, loading, biome, onPressBean }: Hist
         contentContainerStyle={styles.listContent}
         onScroll={e => { scrollOffsetRef.current = e.nativeEvent.contentOffset.y; }}
         scrollEventThrottle={16}
+        onScrollToIndexFailed={info => {
+          // Row not yet measured — fall back to a direct offset jump using the
+          // precomputed itemOffsets table, then let virtualization catch up.
+          const offset = itemOffsets[info.index] ?? info.averageItemLength * info.index;
+          listRef.current?.scrollToOffset({ offset, animated: true });
+        }}
       />
     </View>
   );
-}
+});
+
+export default HistoryVine;
 
 // ─── Node Styles (layout + cartoon border — radius applied inline per side) ────
 
@@ -1044,12 +1083,12 @@ function LadybugIcon({ active, outlineColor, bodySize = 20 }: LadybugIconProps) 
 
 // ---
 
-interface LadybugToggleProps { active: boolean; onToggle: () => void; outlineColor: string }
+export interface LadybugToggleProps { active: boolean; onToggle: () => void; outlineColor: string }
 
 const LB_BTN = 34;
 const LB_SHD = 3;
 
-function LadybugToggle({ active, onToggle, outlineColor }: LadybugToggleProps) {
+export function LadybugToggle({ active, onToggle, outlineColor }: LadybugToggleProps) {
   const scale = useSharedValue(1);
 
   const animStyle = useAnimatedStyle(() => ({ transform: [{ scale: scale.value }] }));

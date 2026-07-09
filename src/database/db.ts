@@ -645,3 +645,33 @@ export async function fetchRandomBean(
   );
   return row ? rowToBean(row) : null;
 }
+
+/**
+ * Returns ONE random *past* bean for the Spontaneous Flashback feature.
+ *
+ * "Past" means created before the start of the local calendar day, so an entry
+ * still being written today is never surfaced. Also skips safeShakeHidden beans.
+ * The local beans table is inherently scoped to the device's signed-in user, so
+ * the active stalk is the ownership boundary here (there is no per-row userId
+ * column locally — that lives only in the cloud mirror for RLS).
+ *
+ * Runs as a single async SQLite query so it never stutters timeline scrolling.
+ */
+export async function fetchRandomPastBean(stalkId: string): Promise<Bean | null> {
+  const db = await getDb();
+
+  // Midnight this morning, local time → excludes anything written "today".
+  const startOfToday = new Date();
+  startOfToday.setHours(0, 0, 0, 0);
+
+  const row = await db.getFirstAsync<BeanRow>(
+    `SELECT ${BEAN_COLS} FROM beans
+     WHERE stalkId = ?
+       AND timestamp < ?
+       AND (extendedData IS NULL OR extendedData NOT LIKE '%"safeShakeHidden":true%')
+     ORDER BY RANDOM()
+     LIMIT 1`,
+    [stalkId, startOfToday.getTime()]
+  );
+  return row ? rowToBean(row) : null;
+}

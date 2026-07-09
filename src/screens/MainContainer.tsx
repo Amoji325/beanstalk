@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   Dimensions,
   StyleSheet,
@@ -21,15 +21,16 @@ import Animated, {
 import { CaptureProvider, useCaptureMode } from '@src/context/CaptureContext';
 import { useStalk } from '@src/context/StalkContext';
 import DialSlider from '@src/components/DialSlider';
-import HistoryVine, { EntryInspectSheet } from '@src/components/HistoryVine';
+import HistoryVine, { EntryInspectSheet, type HistoryVineHandle } from '@src/components/HistoryVine';
 import MemoryModal from '@src/components/MemoryModal';
+import FlashbackModal from '@src/components/FlashbackModal';
 import StalkSwitcher from '@src/components/StalkSwitcher';
 import ScanBeanCapture from '@src/components/capture/ScanBeanCapture';
 import TypeBeanCapture from '@src/components/capture/TypeBeanCapture';
 import VoiceBeanCapture from '@src/components/capture/VoiceBeanCapture';
 import PhotoBeanCapture from '@src/components/capture/PhotoBeanCapture';
 import { useAuth } from '@clerk/expo';
-import { insertBean, updateBean, syncLocalBeanToCloud } from '@src/database';
+import { insertBean, updateBean, syncLocalBeanToCloud, fetchRandomPastBean } from '@src/database';
 import { LocalAiEngine } from '@src/ai/pipeline';
 import { useBeans } from '@src/hooks/useBeans';
 import { useDeviceShake } from '@src/hooks/useDeviceShake';
@@ -139,6 +140,8 @@ interface GardenLayerProps {
   searchQuery: string;
   onSearchToggle: () => void;
   onSearchChange: (q: string) => void;
+  onFlashback: () => void;
+  vineRef: React.Ref<HistoryVineHandle>;
 }
 
 function GardenLayer({
@@ -152,6 +155,8 @@ function GardenLayer({
   searchQuery,
   onSearchToggle,
   onSearchChange,
+  onFlashback,
+  vineRef,
 }: GardenLayerProps) {
   const { palette, nodeSurface } = biome;
   const showEmpty = isSearchActive && searchQuery.trim().length > 0 && displayBeans.length === 0;
@@ -168,6 +173,7 @@ function GardenLayer({
         </View>
       ) : (
         <HistoryVine
+          ref={vineRef}
           beans={displayBeans}
           loading={loading}
           biome={biome}
@@ -194,6 +200,22 @@ function GardenLayer({
         <Text style={[styles.searchBtnIcon, { color: isSearchActive ? nodeSurface : palette.textPrimary }]}>
           🔍
         </Text>
+      </TouchableOpacity>
+
+      {/* Flashback (Shake) button — sits just left of the search button */}
+      <TouchableOpacity
+        style={[
+          styles.flashbackBtn,
+          {
+            backgroundColor: nodeSurface,
+            borderColor: palette.accentColor,
+            shadowColor: palette.accentColor,
+          },
+        ]}
+        onPress={onFlashback}
+        activeOpacity={0.82}
+      >
+        <Text style={[styles.searchBtnIcon, { color: palette.textPrimary }]}>✨</Text>
       </TouchableOpacity>
 
       {/* Search bar — hidden while the inspection sheet is open so it doesn't
@@ -296,6 +318,26 @@ export default function MainContainer() {
   // Safe-Shake memory selection scoped to the active stalk.
   const { memory, reveal, dismiss } = useShakeMemory(activeStalkId);
 
+  // ── Spontaneous Flashback (header-button) ──────────────────────────────────
+  // A random *past* memory pulled on demand and dropped in with a falling
+  // animation. Independent of the accelerometer shake path above.
+  const vineRef = useRef<HistoryVineHandle>(null);
+  const [flashbackBean, setFlashbackBean] = useState<Bean | null>(null);
+  const flashbackBusyRef = useRef(false);
+
+  const revealFlashback = useCallback(async () => {
+    if (flashbackBusyRef.current) return;
+    flashbackBusyRef.current = true;
+    try {
+      const past = await fetchRandomPastBean(activeStalkId);
+      if (past) setFlashbackBean(past);
+    } catch (e) {
+      console.warn('[Beanstalk] flashback fetch failed:', e);
+    } finally {
+      flashbackBusyRef.current = false;
+    }
+  }, [activeStalkId]);
+
   // Accelerometer shake → reveal a safe random memory. Disabled while the Soil
   // is up or a memory is already on screen (avoids stacking modals).
   useDeviceShake({
@@ -385,6 +427,37 @@ export default function MainContainer() {
     [refresh, userId, beans],
   );
 
+  // ── Flashback favourite — local write + background Supabase sync ──────────
+
+  const handleFlashbackFavorite = useCallback(
+    (bean: Bean, next: boolean) => {
+      const updated: Bean = { ...bean, isFavorite: next };
+      // Keep the open card in sync if it's still the same memory.
+      setFlashbackBean((cur) => (cur && cur.id === bean.id ? updated : cur));
+      (async () => {
+        try {
+          await updateBean(bean.id, { isFavorite: next });
+          await refresh();
+          if (userId) syncLocalBeanToCloud(updated, userId);
+        } catch (e) {
+          console.warn('[Beanstalk] flashback favourite failed:', e);
+        }
+      })();
+    },
+    [refresh, userId]
+  );
+
+  // ── Flashback "jump to timeline" — clear overlay, then scroll the vine ─────
+
+  const handleJumpToBean = useCallback((beanId: string) => {
+    setFlashbackBean(null);
+    // Drop any active search so the full timeline is present, then scroll on
+    // the next frame once the list has rebuilt with all beans.
+    setIsSearchActive(false);
+    setSearchQuery('');
+    requestAnimationFrame(() => vineRef.current?.scrollToBean(beanId));
+  }, []);
+
   // ── Soil dismiss pan gesture ─────────────────────────────────────────────
 
   const soilPanGesture = Gesture.Pan()
@@ -435,6 +508,8 @@ export default function MainContainer() {
         searchQuery={searchQuery}
         onSearchToggle={handleSearchToggle}
         onSearchChange={setSearchQuery}
+        onFlashback={revealFlashback}
+        vineRef={vineRef}
       />
 
       {/*
@@ -469,6 +544,15 @@ export default function MainContainer() {
 
       {/* Shake-recalled memory — overlays everything, scales up from centre */}
       <MemoryModal bean={memory} onClose={dismiss} />
+
+      {/* Spontaneous Flashback — falls in from above with three actions */}
+      <FlashbackModal
+        bean={flashbackBean}
+        biome={biome}
+        onClose={() => setFlashbackBean(null)}
+        onToggleFavorite={handleFlashbackFavorite}
+        onJumpToBean={handleJumpToBean}
+      />
     </View>
   );
 }
@@ -548,6 +632,26 @@ const styles = StyleSheet.create({
   searchBtnIcon: {
     fontSize: 15,
     lineHeight: 18,
+  },
+
+  // ── Flashback button ──────────────────────────────────────────────────────
+  // Mirrors the search button, offset one slot to its left (right: 16+38+10).
+  flashbackBtn: {
+    position: 'absolute',
+    top: 52,
+    right: 64,
+    width: 38,
+    height: 38,
+    borderRadius: 19,
+    borderWidth: 3,
+    alignItems: 'center',
+    justifyContent: 'center',
+    zIndex: 51,
+    // Flat cartoon shadow
+    shadowOffset: { width: 3, height: 3 },
+    shadowOpacity: 0.35,
+    shadowRadius: 0,
+    elevation: 6,
   },
 
   // ── Search bar ────────────────────────────────────────────────────────────

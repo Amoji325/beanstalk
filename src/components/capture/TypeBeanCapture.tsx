@@ -69,6 +69,7 @@ export default function TypeBeanCapture({ stalkId, biome, onCapture }: TypeBeanC
           onChangeText={setTitle}
           maxLength={TITLE_MAX}
           returnKeyType="next"
+          autoFocus={false}
           autoCapitalize="words"
           onSubmitEditing={() => bodyRef.current?.focus()}
           blurOnSubmit={false}
@@ -83,6 +84,7 @@ export default function TypeBeanCapture({ stalkId, biome, onCapture }: TypeBeanC
           placeholderTextColor={`${palette.textSecondary}55`}
           value={text}
           onChangeText={setText}
+          autoFocus={false}
           autoCorrect
           autoCapitalize="sentences"
           textAlignVertical="top"

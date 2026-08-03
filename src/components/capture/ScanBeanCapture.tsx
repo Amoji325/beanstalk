@@ -188,6 +188,7 @@ export default function ScanBeanCapture({ stalkId, biome, onCapture }: ScanBeanC
             onChangeText={setTitle}
             maxLength={TITLE_MAX}
             returnKeyType="done"
+            autoFocus={false}
             autoCapitalize="words"
           />
 

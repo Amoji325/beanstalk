@@ -184,6 +184,7 @@ export default function PhotoBeanCapture({ stalkId, biome, onCapture }: PhotoBea
             onChangeText={setTitle}
             maxLength={TITLE_MAX}
             returnKeyType="done"
+            autoFocus={false}
             autoCapitalize="words"
           />
 

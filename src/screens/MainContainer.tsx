@@ -1,10 +1,12 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   Dimensions,
+  Keyboard,
   StyleSheet,
   Text,
   TextInput,
   TouchableOpacity,
+  TouchableWithoutFeedback,
   View,
 } from 'react-native';
 import {
@@ -110,19 +112,21 @@ interface SoilContentProps {
 function SoilContent({ stalkId, biome, chevronAnimStyle, onCapture }: SoilContentProps) {
   return (
     <CaptureProvider>
-      <View style={[styles.soilRoot, { backgroundColor: biome.palette.backgroundEnd }]}>
-        <View style={styles.captureArea}>
-          <ActiveCapturePanel stalkId={stalkId} biome={biome} onCapture={onCapture} />
-        </View>
+      <TouchableWithoutFeedback onPress={Keyboard.dismiss} accessible={false}>
+        <View style={[styles.soilRoot, { backgroundColor: biome.palette.backgroundEnd }]}>
+          <View style={styles.captureArea}>
+            <ActiveCapturePanel stalkId={stalkId} biome={biome} onCapture={onCapture} />
+          </View>
 
-        <View style={styles.dialArea}>
-          <DialSlider biome={biome} />
-        </View>
+          <View style={styles.dialArea}>
+            <DialSlider biome={biome} />
+          </View>
 
-        <Animated.View style={[styles.chevronContainer, chevronAnimStyle]} pointerEvents="none">
-          <Text style={styles.chevronSymbol}>⌄</Text>
-        </Animated.View>
-      </View>
+          <Animated.View style={[styles.chevronContainer, chevronAnimStyle]} pointerEvents="none">
+            <Text style={styles.chevronSymbol}>⌄</Text>
+          </Animated.View>
+        </View>
+      </TouchableWithoutFeedback>
     </CaptureProvider>
   );
 }
@@ -280,8 +284,12 @@ function GardenLayer({
  * soilTranslateY == -SCREEN_HEIGHT → Soil hidden (Garden visible)
  *
  * Gesture conflict resolution:
- *   Soil pan   → failOffsetX([-20, 20])  (won't activate on horizontal drags)
- *   Dial pan   → failOffsetY([-10, 10])  (won't activate on vertical drags)
+ *   Soil/Garden pan → failOffsetX([-20, 20])  (won't activate on horizontal drags)
+ *   Dial pan        → failOffsetY([-10, 10])  (won't activate on vertical drags)
+ *
+ * Vertical navigation (inverted planting gesture):
+ *   Swipe UP   → reveal Soil  (capture / plant a bean)
+ *   Swipe DOWN → reveal Garden (timeline)
  */
 export default function MainContainer() {
   // Clerk-verified user ID — guaranteed non-null here because RootGate only
@@ -295,7 +303,7 @@ export default function MainContainer() {
 
   // Tracks whether the Garden is the active layer — gates the shake listener
   // so a shake only recalls a memory while the user is viewing the garden.
-  const [gardenVisible, setGardenVisible] = useState(false);
+  const [gardenVisible, setGardenVisible] = useState(true);
   const [inspectedBean, setInspectedBean] = useState<Bean | null>(null);
 
   // ── Search state ─────────────────────────────────────────────────────────
@@ -349,7 +357,7 @@ export default function MainContainer() {
   // silently degrades to the rule-based fallback if the model is absent.
   useEffect(() => { LocalAiEngine.initializeEngine(); }, []);
 
-  const soilTranslateY = useSharedValue(0);
+  const soilTranslateY = useSharedValue(-SCREEN_HEIGHT);
   const dragStartY     = useSharedValue(0);
 
   // ── Snap helpers ─────────────────────────────────────────────────────────
@@ -458,7 +466,9 @@ export default function MainContainer() {
     requestAnimationFrame(() => vineRef.current?.scrollToBean(beanId));
   }, []);
 
-  // ── Soil dismiss pan gesture ─────────────────────────────────────────────
+  // ── Soil ↔ Garden pan gesture ────────────────────────────────────────────
+  // Swipe UP pulls Soil into view (plant); swipe DOWN dismisses to Garden.
+  // Gesture wraps both layers so upward planting works from the timeline too.
 
   const soilPanGesture = Gesture.Pan()
     .failOffsetX([-20, 20])
@@ -473,9 +483,16 @@ export default function MainContainer() {
     })
     .onEnd((e) => {
       'worklet';
-      const traveledEnough = Math.abs(soilTranslateY.value) > COMMIT_THRESHOLD;
-      const flickedDown    = e.velocityY > COMMIT_VELOCITY;
-      if (traveledEnough || flickedDown) {
+      const flickedUp = e.velocityY < -COMMIT_VELOCITY;
+      const flickedDown = e.velocityY > COMMIT_VELOCITY;
+      const draggedTowardSoil = soilTranslateY.value > dragStartY.value + COMMIT_THRESHOLD;
+      const draggedTowardGarden = soilTranslateY.value < dragStartY.value - COMMIT_THRESHOLD;
+
+      if (flickedUp || draggedTowardSoil) {
+        openSoil();
+      } else if (flickedDown || draggedTowardGarden) {
+        openGarden();
+      } else if (dragStartY.value < -SCREEN_HEIGHT / 2) {
         openGarden();
       } else {
         openSoil();
@@ -496,64 +513,63 @@ export default function MainContainer() {
   // ── Render ───────────────────────────────────────────────────────────────
 
   return (
-    <View style={[styles.root, { backgroundColor: biome.palette.backgroundEnd }]}>
-      <GardenLayer
-        displayBeans={filteredBeans}
-        loading={loading}
-        biome={biome}
-        onFabPress={openSoil}
-        onPressBean={setInspectedBean}
-        isSearchActive={isSearchActive}
-        isInspecting={inspectedBean !== null}
-        searchQuery={searchQuery}
-        onSearchToggle={handleSearchToggle}
-        onSearchChange={setSearchQuery}
-        onFlashback={revealFlashback}
-        vineRef={vineRef}
-      />
+    <GestureDetector gesture={soilPanGesture}>
+      <View style={[styles.root, { backgroundColor: biome.palette.backgroundEnd }]}>
+        <GardenLayer
+          displayBeans={filteredBeans}
+          loading={loading}
+          biome={biome}
+          onFabPress={openSoil}
+          onPressBean={setInspectedBean}
+          isSearchActive={isSearchActive}
+          isInspecting={inspectedBean !== null}
+          searchQuery={searchQuery}
+          onSearchToggle={handleSearchToggle}
+          onSearchChange={setSearchQuery}
+          onFlashback={revealFlashback}
+          vineRef={vineRef}
+        />
 
-      {/*
-       * pointerEvents guard: when Garden is the active layer the Soil
-       * Animated.View is visually off-screen but its absoluteFill hit-rect
-       * would otherwise swallow all Garden touches. Setting "none" collapses
-       * the entire branch out of hit-testing until Soil is visible again.
-       */}
-      <View
-        style={StyleSheet.absoluteFill}
-        pointerEvents={gardenVisible ? 'none' : 'box-none'}
-      >
-        <GestureDetector gesture={soilPanGesture}>
-          <Animated.View style={[StyleSheet.absoluteFill, soilAnimStyle]}>
-            <SoilContent
-              stalkId={activeStalkId}
-              biome={biome}
-              chevronAnimStyle={chevronAnimStyle}
-              onCapture={handleCapture}
-            />
-          </Animated.View>
-        </GestureDetector>
+        {/*
+         * pointerEvents guard: when Garden is the active layer the Soil
+         * Animated.View is visually off-screen but its absoluteFill hit-rect
+         * would otherwise swallow all Garden touches. Setting "none" collapses
+         * the Soil branch out of hit-testing until it slides back into view.
+         * The parent GestureDetector still receives vertical pans on Garden.
+         */}
+        <Animated.View
+          style={[StyleSheet.absoluteFill, soilAnimStyle]}
+          pointerEvents={gardenVisible ? 'none' : 'auto'}
+        >
+          <SoilContent
+            stalkId={activeStalkId}
+            biome={biome}
+            chevronAnimStyle={chevronAnimStyle}
+            onCapture={handleCapture}
+          />
+        </Animated.View>
+
+        {/* Entry inspection sheet — above Garden + Soil, below shake modal */}
+        <EntryInspectSheet
+          bean={inspectedBean}
+          biome={biome}
+          onClose={() => setInspectedBean(null)}
+          onUpdate={handleBeanUpdate}
+        />
+
+        {/* Shake-recalled memory — overlays everything, scales up from centre */}
+        <MemoryModal bean={memory} onClose={dismiss} />
+
+        {/* Spontaneous Flashback — falls in from above with three actions */}
+        <FlashbackModal
+          bean={flashbackBean}
+          biome={biome}
+          onClose={() => setFlashbackBean(null)}
+          onToggleFavorite={handleFlashbackFavorite}
+          onJumpToBean={handleJumpToBean}
+        />
       </View>
-
-      {/* Entry inspection sheet — above Garden + Soil, below shake modal */}
-      <EntryInspectSheet
-        bean={inspectedBean}
-        biome={biome}
-        onClose={() => setInspectedBean(null)}
-        onUpdate={handleBeanUpdate}
-      />
-
-      {/* Shake-recalled memory — overlays everything, scales up from centre */}
-      <MemoryModal bean={memory} onClose={dismiss} />
-
-      {/* Spontaneous Flashback — falls in from above with three actions */}
-      <FlashbackModal
-        bean={flashbackBean}
-        biome={biome}
-        onClose={() => setFlashbackBean(null)}
-        onToggleFavorite={handleFlashbackFavorite}
-        onJumpToBean={handleJumpToBean}
-      />
-    </View>
+    </GestureDetector>
   );
 }
 

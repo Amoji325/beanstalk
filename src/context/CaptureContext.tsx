@@ -5,6 +5,7 @@ import React, {
   useMemo,
   useState,
 } from 'react';
+import { Keyboard } from 'react-native';
 import type { CaptureMode } from '@src/types';
 
 // ─── Mode Metadata ─────────────────────────────────────────────────────────
@@ -51,6 +52,7 @@ export function CaptureProvider({
   const [activeModeIndex, setActiveModeIndexState] = useState(initialIndex);
 
   const setActiveModeIndex = useCallback((index: number) => {
+    Keyboard.dismiss();
     setActiveModeIndexState(Math.min(3, Math.max(0, index)));
   }, []);
 

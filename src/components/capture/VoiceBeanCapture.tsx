@@ -405,6 +405,7 @@ export default function VoiceBeanCapture({ stalkId, biome, onCapture }: VoiceBea
             onChangeText={setTitle}
             maxLength={TITLE_MAX}
             returnKeyType="done"
+            autoFocus={false}
             autoCapitalize="words"
           />
 

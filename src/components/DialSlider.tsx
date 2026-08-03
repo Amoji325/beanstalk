@@ -1,5 +1,5 @@
 import React from 'react';
-import { Dimensions, StyleSheet, Text } from 'react-native';
+import { Dimensions, Keyboard, StyleSheet, Text } from 'react-native';
 import {
   Gesture,
   GestureDetector,
@@ -94,6 +94,9 @@ export default function DialSlider({ biome }: DialSliderProps) {
     .onBegin(() => {
       'worklet';
       dragStartThumbX.value = thumbX.value;
+      // Switching entry modes should never fight the keyboard — hide it the
+      // moment the user starts sweeping the dial.
+      runOnJS(Keyboard.dismiss)();
     })
     .onUpdate((e) => {
       'worklet';
@@ -125,6 +128,8 @@ export default function DialSlider({ biome }: DialSliderProps) {
       lastHapticIndex.value = tappedIdx;
       runOnJS(setActiveModeIndex)(tappedIdx);
       runOnJS(triggerHaptic)();
+      // Tapping a mode tab dismisses the keyboard so it can't obscure the tabs.
+      runOnJS(Keyboard.dismiss)();
     });
 
   // Race: a quick tap resolves before pan can activate; a drag cancels the tap.

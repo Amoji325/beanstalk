@@ -131,34 +131,48 @@ const COSMIC_VINEYARD: BiomeConfig = {
   visuals: { nodeBorderWidth: 1.5, glow: true, particles: true },
 };
 
-// ─── MUSIC JOURNEY — Deep charcoal, lavender-purple vine, neon magenta accents ─
+// ─── OCEAN DEPTHS — Deep dark navy, ocean-blue vine, muted azure accent ───────
 
-const MUSIC_JOURNEY: BiomeConfig = {
-  theme: 'music_journey',
-  displayName: 'Music Journey',
+const OCEAN_DEPTHS: BiomeConfig = {
+  theme: 'ocean_depths',
+  displayName: 'Ocean Depths',
   palette: {
-    backgroundStart: '#1a0f2e', // deep midnight purple
-    backgroundEnd:   '#121212', // near-black charcoal canvas
-    vineColor:       '#C8A2C8', // lavender purple spine
-    leafColor:       '#D8B4E2', // soft lavender leaf
-    flowerColor:     '#FF00FF', // neon magenta blossom
-    fruitColor:      '#9B59B6', // deep violet fruit
-    rootColor:       '#6C3483', // dark indigo root
-    mistOverlayColor:'rgba(200,162,200,0.18)',
-    textPrimary:     '#E6E6FA', // pastel lilac — reads on charcoal
-    textSecondary:   '#C8A2C8', // lavender mid-tone
-    accentColor:     '#FF00FF', // neon magenta accent
+    backgroundStart: '#08192b', // dark twilight water
+    backgroundEnd:   '#030b16', // near-black navy floor
+    vineColor:       '#1c4f7c', // deep ocean blue
+    leafColor:       '#2f6fa0', // muted sea blue
+    flowerColor:     '#4a90c2', // medium blue bloom
+    fruitColor:      '#1a4368', // deep navy fruit
+    rootColor:       '#12304d', // dark reef
+    mistOverlayColor:'rgba(80,140,200,0.14)',
+    textPrimary:     '#cfe2f2', // pale foam
+    textSecondary:   '#5a7a9a', // muted slate blue
+    accentColor:     '#2f80c4', // darker azure accent
   },
-  nodeSurface: '#1e1040', // dark violet card background
-  visuals: {
-    nodeBorderWidth: 3,
-    glow: true,
-    particles: false,
-    // Lavender outline stays visible on the dark card surface without relying
-    // on the luminance heuristic (which would otherwise pick white at low opacity).
-    cardOutline: '#C8A2C8',
-    cardShadow: 'rgba(200,162,200,0.50)',
+  nodeSurface: '#06182a',
+  visuals: { nodeBorderWidth: 2, glow: true, particles: false },
+};
+
+// ─── CHERRY BLOSSOM — Soft light: mauve vine, sakura pinks, rose accent ───────
+
+const CHERRY_BLOSSOM: BiomeConfig = {
+  theme: 'cherry_blossom',
+  displayName: 'Cherry Blossom',
+  palette: {
+    backgroundStart: '#fdeef2', // pale petal
+    backgroundEnd:   '#f8e0e8', // soft blush floor
+    vineColor:       '#c97b95', // mauve branch
+    leafColor:       '#e39aab', // dusty rose leaf
+    flowerColor:     '#ff9ec4', // bright sakura bloom
+    fruitColor:      '#b5638a', // plum berry
+    rootColor:       '#8a5a4a', // warm bark
+    mistOverlayColor:'rgba(255,240,245,0.7)',
+    textPrimary:     '#4a2a38', // deep plum — reads on pink
+    textSecondary:   '#9a6a7a', // muted mauve
+    accentColor:     '#e85d92', // rose accent
   },
+  nodeSurface: '#fff6f9', // lightest petal card
+  visuals: { nodeBorderWidth: 2, glow: false, particles: false, nodeBorderTint: '#e39aab' },
 };
 
 // ─── Registry ─────────────────────────────────────────────────────────────────
@@ -168,7 +182,8 @@ export const BIOMES: Record<BiomeTheme, BiomeConfig> = {
   neon_night:      NEON_NIGHT,
   bonsai_oasis:    BONSAI_OASIS,
   cosmic_vineyard: COSMIC_VINEYARD,
-  music_journey:   MUSIC_JOURNEY,
+  ocean_depths:    OCEAN_DEPTHS,
+  cherry_blossom:  CHERRY_BLOSSOM,
 };
 
 /** Stable display order — also used to rotate themes for newly created stalks. */
@@ -177,7 +192,8 @@ export const BIOME_ORDER: BiomeTheme[] = [
   'neon_night',
   'bonsai_oasis',
   'cosmic_vineyard',
-  'music_journey',
+  'ocean_depths',
+  'cherry_blossom',
 ];
 
 /** Safe lookup with a Standard fallback for unknown / legacy theme values. */

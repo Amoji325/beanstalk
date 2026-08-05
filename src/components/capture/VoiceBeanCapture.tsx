@@ -32,7 +32,7 @@ import type { Bean } from '@src/types';
 // ─── Constants ────────────────────────────────────────────────────────────────
 
 const MAX_DURATION_S = 300;
-const MIN_DURATION_S = 5;
+const MIN_DURATION_S = 0; // no minimum — any recording length can be planted
 const PLANT_H = 52;
 const SHADOW_OFF = 4;
 const KNOB_R = 7;
@@ -402,7 +402,7 @@ export default function VoiceBeanCapture({ stalkId, biome, onCapture }: VoiceBea
               },
             ]}
             placeholder="Name your bean..."
-            placeholderTextColor={`${palette.textSecondary}55`}
+            placeholderTextColor={`${palette.accentColor}B3`}
             value={title}
             onChangeText={setTitle}
             maxLength={TITLE_MAX}
@@ -474,16 +474,11 @@ export default function VoiceBeanCapture({ stalkId, biome, onCapture }: VoiceBea
       <Text
         style={[
           styles.timer,
-          { color: `${palette.textSecondary}66` },
+          { color: palette.textSecondary },
           isRecording && { color: palette.textPrimary },
         ]}
       >
         {fmtTime(elapsedSeconds)}
-        {isRecording && elapsedSeconds < MIN_DURATION_S && (
-          <Text style={[styles.minHint, { color: palette.textSecondary }]}>
-            {`  hold for ${MIN_DURATION_S - elapsedSeconds}s`}
-          </Text>
-        )}
       </Text>
 
       <TouchableOpacity
@@ -504,7 +499,7 @@ export default function VoiceBeanCapture({ stalkId, biome, onCapture }: VoiceBea
         />
       </TouchableOpacity>
 
-      <Text style={[styles.hint, { color: `${palette.textSecondary}55` }]}>
+      <Text style={[styles.hint, { color: palette.textSecondary }]}>
         {isRecording ? 'Tap to finish' : 'Tap to record'}
       </Text>
     </View>
@@ -551,11 +546,6 @@ const styles = StyleSheet.create({
     fontWeight: '200',
     letterSpacing: 4,
     fontVariant: ['tabular-nums'],
-  },
-  minHint: {
-    fontSize: 13,
-    letterSpacing: 0,
-    fontWeight: '400',
   },
 
   // ── Record Button ─────────────────────────────────────────────────────────

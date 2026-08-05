@@ -15,7 +15,8 @@ import Animated, {
   withSpring,
   withTiming,
 } from 'react-native-reanimated';
-import { LadybugToggle } from '@src/components/HistoryVine';
+import { useAudioPlayer, useAudioPlayerStatus } from 'expo-audio';
+import { LadybugToggle, FullscreenImageViewer } from '@src/components/HistoryVine';
 import type { Bean } from '@src/types';
 import type { BiomeConfig } from '@src/constants';
 
@@ -49,9 +50,66 @@ function fmtFullDate(ts: number): string {
   });
 }
 
+// ─── Voice player ─────────────────────────────────────────────────────────────
+// Real playback for recalled voice memories (expo-audio hook player). Global
+// audio mode with playsInSilentMode is configured at app start, so this is
+// audible under the iOS mute switch. Released automatically on unmount.
+
+function FlashbackVoicePlayer({
+  uri,
+  fallbackDuration,
+  accent,
+  textColor,
+}: {
+  uri: string;
+  fallbackDuration?: number;
+  accent: string;
+  textColor: string;
+}) {
+  const player = useAudioPlayer({ uri });
+  const status = useAudioPlayerStatus(player);
+  const duration = status.duration > 0 ? status.duration : fallbackDuration ?? 0;
+
+  const handlePlayPause = () => {
+    if (status.playing) {
+      player.pause();
+    } else {
+      if (status.didJustFinish || (duration > 0 && status.currentTime >= duration)) {
+        void player.seekTo(0);
+      }
+      player.play();
+    }
+  };
+
+  return (
+    <View style={styles.voiceWrap}>
+      <TouchableOpacity
+        style={[styles.voicePlayBtn, { backgroundColor: accent }]}
+        onPress={handlePlayPause}
+        activeOpacity={0.85}
+      >
+        <Text style={styles.voicePlayGlyph}>{status.playing ? '❚❚' : '▶'}</Text>
+      </TouchableOpacity>
+      <Text style={[styles.voiceDuration, { color: textColor }]}>
+        {fmtDuration(Math.round(duration) || fallbackDuration)}
+      </Text>
+    </View>
+  );
+}
+
 // ─── Type-aware body ──────────────────────────────────────────────────────────
 
-function FlashbackBody({ bean, textColor }: { bean: Bean; textColor: string }) {
+function FlashbackBody({
+  bean,
+  textColor,
+  accent,
+  onOpenImage,
+}: {
+  bean: Bean;
+  textColor: string;
+  accent: string;
+  onOpenImage: (uri: string) => void;
+}) {
   switch (bean.type) {
     case 'type':
       return <Text style={[styles.bodyText, { color: textColor }]}>{bean.textContent || '(empty note)'}</Text>;
@@ -59,7 +117,9 @@ function FlashbackBody({ bean, textColor }: { bean: Bean; textColor: string }) {
     case 'photo': {
       const uri = bean.imageUri ?? bean.thumbnailUri;
       return uri ? (
-        <Image source={{ uri }} style={styles.bodyImage} resizeMode="cover" />
+        <Pressable onPress={() => onOpenImage(uri)}>
+          <Image source={{ uri }} style={styles.bodyImage} resizeMode="cover" />
+        </Pressable>
       ) : (
         <View style={styles.bodyImagePlaceholder}>
           <Text style={styles.placeholderGlyph}>⚘</Text>
@@ -68,21 +128,32 @@ function FlashbackBody({ bean, textColor }: { bean: Bean; textColor: string }) {
     }
 
     case 'voice':
-      return (
-        <View style={styles.voiceWrap}>
-          <Text style={[styles.voiceDuration, { color: textColor }]}>
-            🎧 {fmtDuration(bean.audioDurationSeconds)}
-          </Text>
+      return bean.audioUri ? (
+        <View style={styles.voiceColumn}>
+          <FlashbackVoicePlayer
+            uri={bean.audioUri}
+            fallbackDuration={bean.audioDurationSeconds}
+            accent={accent}
+            textColor={textColor}
+          />
           {!!bean.transcription && (
             <Text style={[styles.bodyText, { color: textColor }]}>{bean.transcription}</Text>
           )}
+        </View>
+      ) : (
+        <View style={styles.voiceWrap}>
+          <Text style={[styles.voiceDuration, { color: textColor }]}>
+            {fmtDuration(bean.audioDurationSeconds)}
+          </Text>
         </View>
       );
 
     case 'scan': {
       const scanUri = bean.scanPageUris?.[0] ?? bean.scanThumbnailUri;
       return scanUri ? (
-        <Image source={{ uri: scanUri }} style={styles.bodyImage} resizeMode="cover" />
+        <Pressable onPress={() => onOpenImage(scanUri)}>
+          <Image source={{ uri: scanUri }} style={styles.bodyImage} resizeMode="cover" />
+        </Pressable>
       ) : (
         <Text style={[styles.bodyText, { color: textColor }]}>
           {bean.scannedText || bean.caption || '(scanned page)'}
@@ -117,6 +188,8 @@ export default function FlashbackModal({
 
   // Local favourite state so the ladybug reacts instantly; seeded per memory.
   const [isFavorite, setIsFavorite] = useState(false);
+  // Fullscreen zoom viewer target (photo / scan page), null when closed.
+  const [viewerUri, setViewerUri] = useState<string | null>(null);
 
   const translateY = useSharedValue(START_Y);
   const opacity    = useSharedValue(0);
@@ -190,7 +263,12 @@ export default function FlashbackModal({
 
         {/* Body */}
         <View style={styles.body}>
-          <FlashbackBody bean={bean} textColor={palette.textPrimary} />
+          <FlashbackBody
+            bean={bean}
+            textColor={palette.textPrimary}
+            accent={palette.accentColor}
+            onOpenImage={setViewerUri}
+          />
         </View>
 
         {/* Actions: ladybug favourite + jump to timeline */}
@@ -209,6 +287,9 @@ export default function FlashbackModal({
           </TouchableOpacity>
         </View>
       </Animated.View>
+
+      {/* Tap a photo / scanned page to view it fullscreen & zoom */}
+      <FullscreenImageViewer uris={viewerUri ? [viewerUri] : null} onClose={() => setViewerUri(null)} />
     </Animated.View>
   );
 }
@@ -297,9 +378,27 @@ const styles = StyleSheet.create({
     fontSize: 48,
     color: '#4caf50',
   },
-  voiceWrap: {
-    gap: 12,
+  voiceColumn: {
+    gap: 14,
     alignItems: 'flex-start',
+  },
+  voiceWrap: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 14,
+  },
+  voicePlayBtn: {
+    width: 48,
+    height: 48,
+    borderRadius: 24,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  voicePlayGlyph: {
+    color: '#fff',
+    fontSize: 16,
+    fontWeight: '700',
+    marginLeft: 2,
   },
   voiceDuration: {
     fontSize: 15,

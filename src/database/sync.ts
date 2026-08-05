@@ -146,6 +146,25 @@ export async function syncLocalBeanToCloud(bean: Bean, userId: string): Promise<
  * @param userId  - Clerk's verified user ID, used as the RLS ownership key.
  * @param stalkId - Optional stalk filter for a targeted retry pass.
  */
+/**
+ * Deletes a bean from the cloud (best-effort). The local row is removed
+ * separately via deleteBean(); this mirrors that removal to Supabase. Scoped by
+ * user_id so RLS is satisfied. Swallows errors — a failed cloud delete simply
+ * leaves an orphan row that a later full sync can reconcile.
+ */
+export async function deleteBeanFromCloud(id: string, userId: string): Promise<void> {
+  try {
+    const { error } = await supabase
+      .from('beans')
+      .delete()
+      .eq('id', id)
+      .eq('user_id', userId);
+    if (error) throw error;
+  } catch (err) {
+    console.warn('[Sync] cloud delete deferred:', err);
+  }
+}
+
 export async function syncPendingBeans(
   userId: string,
   stalkId?: string

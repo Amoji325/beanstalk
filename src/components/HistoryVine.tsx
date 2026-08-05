@@ -8,6 +8,7 @@ import React, {
   useState,
 } from 'react';
 import {
+  Alert,
   Dimensions,
   FlatList,
   Image,
@@ -1023,7 +1024,7 @@ interface LadybugIconProps {
  *     ├── divider — 1-2px line through the exact horizontal midpoint
  *     └── 4 spots — symmetric pairs in upper/lower halves
  */
-function LadybugIcon({ active, outlineColor, bodySize = 20 }: LadybugIconProps) {
+export function LadybugIcon({ active, outlineColor, bodySize = 20 }: LadybugIconProps) {
   // ── Derived dimensions (all from bodySize) ────────────────────────────────
   const border  = Math.max(1.5, Math.round(bodySize * 0.1));
   const headD   = Math.round(bodySize * 0.42);       // e.g. 8 for size=20
@@ -1368,33 +1369,90 @@ function AutoImage({ uri, style, onPress }: { uri: string; style?: object; onPre
 // Tapping a page/photo opens it edge-to-edge. iOS ScrollView gives native
 // pinch-to-zoom + pan for free; the ✕ button (or hardware back) dismisses.
 
-function FullscreenImageViewer({ uri, onClose }: { uri: string | null; onClose: () => void }) {
+// A single full-screen, pinch-zoomable page. bounces=false so that at 1× the
+// vertical drag falls through to the parent paging list instead of rubber-banding.
+function ZoomablePage({ uri }: { uri: string }) {
+  return (
+    <ScrollView
+      style={{ width: SCREEN_WIDTH, height: SCREEN_HEIGHT }}
+      contentContainerStyle={viewerStyles.content}
+      minimumZoomScale={1}
+      maximumZoomScale={5}
+      centerContent
+      bounces={false}
+      showsVerticalScrollIndicator={false}
+      showsHorizontalScrollIndicator={false}
+    >
+      <Image
+        source={{ uri }}
+        style={{ width: SCREEN_WIDTH, height: SCREEN_HEIGHT }}
+        resizeMode="contain"
+      />
+    </ScrollView>
+  );
+}
+
+export function FullscreenImageViewer({
+  uris,
+  initialIndex = 0,
+  onClose,
+}: {
+  uris: string[] | null;
+  initialIndex?: number;
+  onClose: () => void;
+}) {
+  const [index, setIndex] = useState(0);
+  const count = uris?.length ?? 0;
+  const listRef = useRef<FlatList>(null);
+
+  // Jump to the tapped page whenever a new set opens. The list stays mounted
+  // inside the Modal, so initialScrollIndex alone won't re-apply on reopen.
+  useEffect(() => {
+    if (uris && uris.length > 0) {
+      const target = Math.min(initialIndex, uris.length - 1);
+      setIndex(target);
+      requestAnimationFrame(() => {
+        listRef.current?.scrollToIndex({ index: target, animated: false });
+      });
+    }
+  }, [uris, initialIndex]);
+
+  // Native vertical paging drives page changes; sync the badge on settle.
+  const handleMomentumEnd = (e: { nativeEvent: { contentOffset: { y: number } } }) => {
+    setIndex(Math.round(e.nativeEvent.contentOffset.y / SCREEN_HEIGHT));
+  };
+
   return (
     <Modal
-      visible={uri !== null}
+      visible={uris !== null && count > 0}
       transparent
       animationType="fade"
       onRequestClose={onClose}
       statusBarTranslucent
     >
       <View style={viewerStyles.backdrop}>
-        <ScrollView
-          style={StyleSheet.absoluteFill}
-          contentContainerStyle={viewerStyles.content}
-          minimumZoomScale={1}
-          maximumZoomScale={5}
-          centerContent
+        <FlatList
+          ref={listRef}
+          data={uris ?? []}
+          keyExtractor={(u, i) => `${u}-${i}`}
+          renderItem={({ item }) => <ZoomablePage uri={item} />}
+          pagingEnabled
           showsVerticalScrollIndicator={false}
-          showsHorizontalScrollIndicator={false}
-        >
-          {uri && (
-            <Image
-              source={{ uri }}
-              style={{ width: SCREEN_WIDTH, height: SCREEN_HEIGHT }}
-              resizeMode="contain"
-            />
-          )}
-        </ScrollView>
+          initialScrollIndex={Math.min(initialIndex, Math.max(0, count - 1))}
+          getItemLayout={(_, i) => ({ length: SCREEN_HEIGHT, offset: SCREEN_HEIGHT * i, index: i })}
+          onScrollToIndexFailed={(info) =>
+            listRef.current?.scrollToOffset({ offset: info.index * SCREEN_HEIGHT, animated: false })
+          }
+          onMomentumScrollEnd={handleMomentumEnd}
+        />
+
+        {count > 1 && (
+          <View style={viewerStyles.pageBadge} pointerEvents="none">
+            <Text style={viewerStyles.pageBadgeText}>{index + 1} / {count}</Text>
+            <Text style={viewerStyles.pageHint}>swipe to flip pages</Text>
+          </View>
+        )}
+
         <TouchableOpacity
           style={viewerStyles.closeBtn}
           onPress={onClose}
@@ -1434,13 +1492,36 @@ const viewerStyles = StyleSheet.create({
     fontWeight: '600',
     lineHeight: 20,
   },
+  pageBadge: {
+    position: 'absolute',
+    bottom: 44,
+    alignSelf: 'center',
+    alignItems: 'center',
+    gap: 2,
+    paddingHorizontal: 16,
+    paddingVertical: 8,
+    borderRadius: 16,
+    backgroundColor: 'rgba(0,0,0,0.5)',
+  },
+  pageBadgeText: {
+    color: '#fff',
+    fontSize: 14,
+    fontWeight: '700',
+    letterSpacing: 0.5,
+    fontVariant: ['tabular-nums'],
+  },
+  pageHint: {
+    color: 'rgba(255,255,255,0.6)',
+    fontSize: 11,
+    letterSpacing: 0.3,
+  },
 });
 
 // ─── Bean Inspect Body ────────────────────────────────────────────────────────
 
 function BeanInspectBody({ bean, c }: { bean: Bean; c: VineColors }) {
-  // Which image (if any) is open in the fullscreen zoom viewer.
-  const [viewerUri, setViewerUri] = useState<string | null>(null);
+  // Fullscreen zoom viewer: the set of page URIs and which one to open at.
+  const [viewer, setViewer] = useState<{ uris: string[]; index: number } | null>(null);
 
   let content: React.ReactNode;
   switch (bean.type) {
@@ -1453,7 +1534,7 @@ function BeanInspectBody({ bean, c }: { bean: Bean; c: VineColors }) {
       break;
     case 'photo':
       content = bean.imageUri ? (
-        <AutoImage uri={bean.imageUri} onPress={() => setViewerUri(bean.imageUri!)} />
+        <AutoImage uri={bean.imageUri} onPress={() => setViewer({ uris: [bean.imageUri!], index: 0 })} />
       ) : (
         <Text style={[inspectStyles.emptyHint, { color: c.textSecondary }]}>No image captured.</Text>
       );
@@ -1495,7 +1576,7 @@ function BeanInspectBody({ bean, c }: { bean: Bean; c: VineColors }) {
               key={`${uri}-${i}`}
               uri={uri}
               style={inspectStyles.scanPage}
-              onPress={() => setViewerUri(uri)}
+              onPress={() => setViewer({ uris: pages, index: i })}
             />
           ))}
           {!!bean.scannedText && (
@@ -1512,7 +1593,11 @@ function BeanInspectBody({ bean, c }: { bean: Bean; c: VineColors }) {
   return (
     <>
       {content}
-      <FullscreenImageViewer uri={viewerUri} onClose={() => setViewerUri(null)} />
+      <FullscreenImageViewer
+        uris={viewer?.uris ?? null}
+        initialIndex={viewer?.index ?? 0}
+        onClose={() => setViewer(null)}
+      />
     </>
   );
 }
@@ -1522,9 +1607,11 @@ export interface EntryInspectSheetProps {
   biome: BiomeConfig;
   onClose: () => void;
   onUpdate?: (id: string, patch: Partial<Pick<Bean, 'title' | 'isFavorite'>>) => Promise<void>;
+  /** Permanently deletes the entry. The sheet closes before this fires. */
+  onDelete?: (id: string) => void;
 }
 
-export function EntryInspectSheet({ bean, biome, onClose, onUpdate }: EntryInspectSheetProps) {
+export function EntryInspectSheet({ bean, biome, onClose, onUpdate, onDelete }: EntryInspectSheetProps) {
   const c = useMemo(() => makeColors(biome), [biome]);
 
   // All hooks must be declared before any conditional return.
@@ -1564,6 +1651,25 @@ export function EntryInspectSheet({ bean, biome, onClose, onUpdate }: EntryInspe
     if (trimmed !== bean.title) {
       await onUpdate?.(bean.id, { title: trimmed });
     }
+  };
+
+  const handleDelete = () => {
+    Alert.alert(
+      'Delete entry?',
+      'This bean will be permanently removed from your garden.',
+      [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'Delete',
+          style: 'destructive',
+          onPress: () => {
+            const id = bean.id;
+            onClose();
+            onDelete?.(id);
+          },
+        },
+      ],
+    );
   };
 
   return (
@@ -1653,10 +1759,23 @@ export function EntryInspectSheet({ bean, biome, onClose, onUpdate }: EntryInspe
         >
           <BeanInspectBody bean={bean} c={c} />
         </ScrollView>
+
+        {/* Footer — delete action */}
+        <View style={[inspectStyles.footer, { borderTopColor: `${c.textSecondary}28` }]}>
+          <TouchableOpacity
+            onPress={handleDelete}
+            style={[inspectStyles.deleteBtn, { borderColor: `${DELETE_RED}66` }]}
+            activeOpacity={0.75}
+          >
+            <Text style={[inspectStyles.deleteLabel, { color: DELETE_RED }]}>Delete entry</Text>
+          </TouchableOpacity>
+        </View>
       </Animated.View>
     </Animated.View>
   );
 }
+
+const DELETE_RED = '#E5484D';
 
 const inspectStyles = StyleSheet.create({
   backdrop: {
@@ -1668,8 +1787,8 @@ const inspectStyles = StyleSheet.create({
     position: 'absolute',
     left: 20,
     right: 20,
-    top: SCREEN_HEIGHT * 0.10,
-    maxHeight: SCREEN_HEIGHT * 0.82,
+    top: SCREEN_HEIGHT * 0.16,
+    maxHeight: SCREEN_HEIGHT * 0.78,
     borderRadius: 18,
     borderTopWidth: 3,
     overflow: 'hidden',
@@ -1686,6 +1805,23 @@ const inspectStyles = StyleSheet.create({
     paddingVertical: 14,
     gap: 10,
     borderBottomWidth: StyleSheet.hairlineWidth,
+  },
+  footer: {
+    paddingHorizontal: 18,
+    paddingVertical: 12,
+    borderTopWidth: StyleSheet.hairlineWidth,
+    alignItems: 'center',
+  },
+  deleteBtn: {
+    paddingHorizontal: 24,
+    paddingVertical: 10,
+    borderRadius: 20,
+    borderWidth: 1.5,
+  },
+  deleteLabel: {
+    fontSize: 14,
+    fontWeight: '700',
+    letterSpacing: 0.3,
   },
   typeBadge: {
     borderWidth: 1,

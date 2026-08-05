@@ -101,6 +101,75 @@ const galleryIconStyles = StyleSheet.create({
   },
 });
 
+// ─── Flip icon (two circling arrows, drawn — no emoji, no icon font) ──────────
+// Two semicircular arcs (each a full ring clipped to a half, then rotated) with
+// arrowheads at their ends, reading as the classic "flip / rotate" symbol.
+
+function FlipIcon({ color, size = 20 }: { color: string; size?: number }) {
+  const bw = Math.max(2, Math.round(size * 0.12));
+  const head = Math.round(size * 0.34);
+  const ring = {
+    width: size,
+    height: size,
+    borderRadius: size / 2,
+    borderWidth: bw,
+    borderColor: color,
+  };
+  return (
+    <View style={{ width: size, height: size }}>
+      {/* Top arc — clip the ring to its top half */}
+      <View style={{ position: 'absolute', width: size, height: size / 2, overflow: 'hidden' }}>
+        <View style={ring} />
+      </View>
+      {/* Bottom arc — same, rotated 180° */}
+      <View
+        style={{
+          position: 'absolute',
+          top: size / 2,
+          width: size,
+          height: size / 2,
+          overflow: 'hidden',
+          transform: [{ rotate: '180deg' }],
+        }}
+      >
+        <View style={ring} />
+      </View>
+      {/* Arrowhead at the right end of the top arc (points down) */}
+      <View
+        style={{
+          position: 'absolute',
+          right: -1,
+          top: size / 2 - head / 2,
+          width: 0,
+          height: 0,
+          borderLeftWidth: head / 2,
+          borderRightWidth: head / 2,
+          borderTopWidth: head,
+          borderLeftColor: 'transparent',
+          borderRightColor: 'transparent',
+          borderTopColor: color,
+        }}
+      />
+      {/* Arrowhead at the left end of the bottom arc (points up) */}
+      <View
+        style={{
+          position: 'absolute',
+          left: -1,
+          top: size / 2 - head / 2,
+          width: 0,
+          height: 0,
+          borderLeftWidth: head / 2,
+          borderRightWidth: head / 2,
+          borderBottomWidth: head,
+          borderLeftColor: 'transparent',
+          borderRightColor: 'transparent',
+          borderBottomColor: color,
+        }}
+      />
+    </View>
+  );
+}
+
 // ─── Component ────────────────────────────────────────────────────────────────
 
 export default function PhotoBeanCapture({ stalkId, biome, onCapture }: PhotoBeanCaptureProps) {
@@ -265,13 +334,7 @@ export default function PhotoBeanCapture({ stalkId, biome, onCapture }: PhotoBea
         <View style={StyleSheet.absoluteFill} />
       </GestureDetector>
 
-      {/* Flip button — labelled pill so it's unmistakable */}
-      <TouchableOpacity style={styles.flipButton} onPress={toggleFacing} activeOpacity={0.8}>
-        <Text style={styles.flipIcon}>🔄</Text>
-        <Text style={styles.flipLabel}>Flip</Text>
-      </TouchableOpacity>
-
-      {/* Bottom bar: gallery + shutter */}
+      {/* Bottom bar: gallery · shutter · flip — centred as one group */}
       <View style={styles.bottomBar}>
         {/* Gallery button — cartoon outline + flat shadow */}
         <View style={styles.galleryWrap}>
@@ -289,6 +352,11 @@ export default function PhotoBeanCapture({ stalkId, biome, onCapture }: PhotoBea
           activeOpacity={0.8}
         >
           <View style={styles.shutterInner} />
+        </TouchableOpacity>
+
+        {/* Flip camera — drawn two-arrow icon */}
+        <TouchableOpacity style={styles.flipBtn} onPress={toggleFacing} activeOpacity={0.8}>
+          <FlipIcon color="#fff" size={20} />
         </TouchableOpacity>
       </View>
     </View>
@@ -331,30 +399,6 @@ const styles = StyleSheet.create({
   },
 
   // ── Camera controls ───────────────────────────────────────────────────────
-  flipButton: {
-    position: 'absolute',
-    top: 56,
-    right: 24,
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 6,
-    paddingHorizontal: 14,
-    height: 40,
-    borderRadius: 20,
-    backgroundColor: 'rgba(0,0,0,0.55)',
-    borderWidth: 1.5,
-    borderColor: 'rgba(255,255,255,0.85)',
-  },
-  flipIcon: {
-    fontSize: 16,
-    lineHeight: 20,
-  },
-  flipLabel: {
-    color: '#fff',
-    fontSize: 14,
-    fontWeight: '700',
-    letterSpacing: 0.3,
-  },
   bottomBar: {
     position: 'absolute',
     bottom: 36,
@@ -363,7 +407,19 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
-    gap: 36,
+    gap: 28,
+  },
+  // Flip button — circular, sized to balance the gallery button so the shutter
+  // stays centred on screen.
+  flipBtn: {
+    width: 44,
+    height: 44,
+    borderRadius: 22,
+    backgroundColor: 'rgba(0,0,0,0.55)',
+    borderWidth: 2,
+    borderColor: 'rgba(255,255,255,0.8)',
+    alignItems: 'center',
+    justifyContent: 'center',
   },
 
   // ── Gallery button ────────────────────────────────────────────────────────

@@ -73,7 +73,7 @@ function CreateStalkForm({ onSubmit, onCancel }: CreateFormProps) {
             <Text style={formStyles.sectionLabel}>Name</Text>
             <TextInput
               style={formStyles.input}
-              placeholder="e.g. Music Journey…"
+              placeholder="e.g. Morning Pages…"
               placeholderTextColor="rgba(200,230,201,0.3)"
               value={name}
               onChangeText={setName}
@@ -88,7 +88,7 @@ function CreateStalkForm({ onSubmit, onCancel }: CreateFormProps) {
           <View style={formStyles.section}>
             <Text style={formStyles.sectionLabel}>Theme</Text>
             <View style={formStyles.themeList}>
-              {BIOME_ORDER.map((t) => {
+              {BIOME_ORDER.map((t, i) => {
                 const cfg = BIOMES[t];
                 const selected = t === theme;
                 return (
@@ -96,6 +96,10 @@ function CreateStalkForm({ onSubmit, onCancel }: CreateFormProps) {
                     key={t}
                     style={[
                       formStyles.themeRow,
+                      // Round the outer row corners so a selected row's border
+                      // isn't clipped by the list's rounded, overflow-hidden edge.
+                      i === 0 && formStyles.themeRowFirst,
+                      i === BIOME_ORDER.length - 1 && formStyles.themeRowLast,
                       selected && {
                         backgroundColor: `${cfg.palette.accentColor}22`,
                         borderColor: cfg.palette.accentColor,
@@ -144,7 +148,12 @@ function CreateStalkForm({ onSubmit, onCancel }: CreateFormProps) {
 
 // ─── Stalk Switcher ───────────────────────────────────────────────────────────
 
-export default function StalkSwitcher() {
+interface StalkSwitcherProps {
+  /** Fired when the stalk dropdown opens — lets the parent close the search. */
+  onOpen?: () => void;
+}
+
+export default function StalkSwitcher({ onOpen }: StalkSwitcherProps) {
   const {
     stalks,
     activeStalk,
@@ -202,7 +211,13 @@ export default function StalkSwitcher() {
             styles.pill,
             { backgroundColor: nodeSurface, borderColor: palette.accentColor },
           ]}
-          onPress={() => setOpen((o) => !o)}
+          onPress={() =>
+            setOpen((o) => {
+              const next = !o;
+              if (next) onOpen?.(); // opening the stalk menu closes search
+              return next;
+            })
+          }
           activeOpacity={0.85}
         >
           <View style={[styles.dot, { backgroundColor: palette.accentColor }]} />
@@ -502,6 +517,14 @@ const formStyles = StyleSheet.create({
     borderWidth: 1,
     borderColor: 'transparent',
     borderRadius: 0,
+  },
+  themeRowFirst: {
+    borderTopLeftRadius: 11,
+    borderTopRightRadius: 11,
+  },
+  themeRowLast: {
+    borderBottomLeftRadius: 11,
+    borderBottomRightRadius: 11,
   },
   themeSwatch: {
     width: 14,

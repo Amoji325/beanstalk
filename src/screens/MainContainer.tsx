@@ -23,7 +23,7 @@ import Animated, {
 import { CaptureProvider, useCaptureMode } from '@src/context/CaptureContext';
 import { useStalk } from '@src/context/StalkContext';
 import DialSlider from '@src/components/DialSlider';
-import HistoryVine, { EntryInspectSheet, LadybugToggle, type HistoryVineHandle } from '@src/components/HistoryVine';
+import HistoryVine, { EntryInspectSheet, LadybugToggle, LadybugIcon, type HistoryVineHandle } from '@src/components/HistoryVine';
 import MemoryModal from '@src/components/MemoryModal';
 import FlashbackModal from '@src/components/FlashbackModal';
 import StalkSwitcher from '@src/components/StalkSwitcher';
@@ -32,8 +32,10 @@ import TypeBeanCapture from '@src/components/capture/TypeBeanCapture';
 import VoiceBeanCapture from '@src/components/capture/VoiceBeanCapture';
 import PhotoBeanCapture from '@src/components/capture/PhotoBeanCapture';
 import { setAudioModeAsync } from 'expo-audio';
-import { useAuth } from '@clerk/expo';
-import { insertBean, updateBean, syncLocalBeanToCloud, fetchRandomPastBean } from '@src/database';
+import * as Haptics from 'expo-haptics';
+import { useAuth, useUser } from '@clerk/expo';
+import AccountMenu, { accountInitial, avatarKind, AccountAvatarGlyph, type AvatarKind } from '@src/components/AccountMenu';
+import { insertBean, updateBean, deleteBean, syncLocalBeanToCloud, deleteBeanFromCloud, fetchRandomPastBean } from '@src/database';
 import { LocalAiEngine } from '@src/ai/pipeline';
 import { useBeans } from '@src/hooks/useBeans';
 import { useDeviceShake } from '@src/hooks/useDeviceShake';
@@ -134,11 +136,78 @@ function SoilContent({ stalkId, biome, chevronAnimStyle, onCapture }: SoilConten
 
 // ─── Garden Layer ─────────────────────────────────────────────────────────────
 
+// A "no ladybugs" mark for the empty favourites state — the drawn ladybug icon
+// (outline only) with a diagonal slash, so it reads as "none favourited" without
+// an emoji.
+function SlashedLadybug({ color }: { color: string }) {
+  const SIZE = 52;
+  const BOX = Math.round(SIZE * 1.5);
+  const SLASH = Math.round(SIZE * 1.4);
+  return (
+    <View style={{ width: BOX, height: BOX, alignItems: 'center', justifyContent: 'center' }}>
+      <LadybugIcon active={false} outlineColor={color} bodySize={SIZE} />
+      <View
+        style={{
+          position: 'absolute',
+          top: BOX / 2 - 1.5,
+          left: (BOX - SLASH) / 2,
+          width: SLASH,
+          height: 3,
+          borderRadius: 2,
+          backgroundColor: color,
+          transform: [{ rotate: '-45deg' }],
+        }}
+      />
+    </View>
+  );
+}
+
+// Drawn magnifying-glass icon (no emoji): a ring lens (upper-left) + a diagonal
+// handle (lower-right), sized so the whole glyph is centred in its box.
+function SearchIcon({ color, size = 18 }: { color: string; size?: number }) {
+  const lens = Math.round(size * 0.62);
+  const bw = Math.max(2, Math.round(size * 0.11));
+  const pos = Math.round(size * 0.08);   // lens top/left inset
+  const handle = Math.round(size * 0.34);
+  const hCenter = Math.round(size * 0.74); // handle centre along both axes
+  return (
+    <View style={{ width: size, height: size }}>
+      <View
+        style={{
+          position: 'absolute',
+          top: pos,
+          left: pos,
+          width: lens,
+          height: lens,
+          borderRadius: lens / 2,
+          borderWidth: bw,
+          borderColor: color,
+        }}
+      />
+      <View
+        style={{
+          position: 'absolute',
+          top: hCenter - Math.round(bw / 2),
+          left: hCenter - Math.round(handle / 2),
+          width: handle,
+          height: bw,
+          borderRadius: bw / 2,
+          backgroundColor: color,
+          transform: [{ rotate: '45deg' }],
+        }}
+      />
+    </View>
+  );
+}
+
 interface GardenLayerProps {
   displayBeans: Bean[];
   loading: boolean;
   biome: BiomeConfig;
   gardenVisible: boolean;
+  accountInitial: string;
+  accountKind: AvatarKind;
+  onOpenAccount: () => void;
   onFabPress: () => void;
   onPressBean: (bean: Bean) => void;
   isSearchActive: boolean;
@@ -148,6 +217,7 @@ interface GardenLayerProps {
   onSearchToggle: () => void;
   onSearchChange: (q: string) => void;
   onToggleFavorites: () => void;
+  onStalkMenuOpen: () => void;
   onFlashback: () => void;
   vineRef: React.Ref<HistoryVineHandle>;
 }
@@ -157,6 +227,9 @@ function GardenLayer({
   loading,
   biome,
   gardenVisible,
+  accountInitial,
+  accountKind,
+  onOpenAccount,
   onFabPress,
   onPressBean,
   isSearchActive,
@@ -166,6 +239,7 @@ function GardenLayer({
   onSearchToggle,
   onSearchChange,
   onToggleFavorites,
+  onStalkMenuOpen,
   onFlashback,
   vineRef,
 }: GardenLayerProps) {
@@ -180,7 +254,11 @@ function GardenLayer({
       {/* Vine or empty-search state */}
       {showEmpty ? (
         <View style={styles.searchEmpty}>
-          <Text style={styles.searchEmptyEmoji}>{favoritesOnly ? '🐞' : '🌱'}</Text>
+          {favoritesOnly ? (
+            <SlashedLadybug color={palette.textSecondary} />
+          ) : (
+            <Text style={styles.searchEmptyEmoji}>🌱</Text>
+          )}
           <Text style={[styles.searchEmptyText, { color: palette.textSecondary }]}>
             {favoritesOnly
               ? 'No Ladybugged beans here yet!\nTap a bean’s ladybug to favourite it.'
@@ -197,26 +275,46 @@ function GardenLayer({
         />
       )}
 
-      {/* Stalk selector — floats over the top of the vine */}
-      <StalkSwitcher />
+      {/* Account button — top-left; shows the user's initial. Hidden during
+          capture so it doesn't overlap the Soil controls. */}
+      {gardenVisible && (
+        <TouchableOpacity
+          style={[
+            styles.accountBtn,
+            {
+              backgroundColor: nodeSurface,
+              borderColor: palette.accentColor,
+              shadowColor: palette.accentColor,
+            },
+          ]}
+          onPress={onOpenAccount}
+          activeOpacity={0.82}
+        >
+          <AccountAvatarGlyph kind={accountKind} initial={accountInitial} color={palette.accentColor} bg={nodeSurface} size={22} />
+        </TouchableOpacity>
+      )}
 
-      {/* Search toggle button — top-right, beside the StalkSwitcher pill */}
-      <TouchableOpacity
-        style={[
-          styles.searchBtn,
-          {
-            backgroundColor: isSearchActive ? palette.accentColor : nodeSurface,
-            borderColor: palette.accentColor,
-            shadowColor: palette.accentColor,
-          },
-        ]}
-        onPress={onSearchToggle}
-        activeOpacity={0.82}
-      >
-        <Text style={[styles.searchBtnIcon, { color: isSearchActive ? nodeSurface : palette.textPrimary }]}>
-          🔍
-        </Text>
-      </TouchableOpacity>
+      {/* Stalk selector — floats over the top of the vine */}
+      <StalkSwitcher onOpen={onStalkMenuOpen} />
+
+      {/* Search toggle button — top-right, beside the StalkSwitcher pill.
+          Hidden during capture so it can't overlap the Soil controls. */}
+      {gardenVisible && (
+        <TouchableOpacity
+          style={[
+            styles.searchBtn,
+            {
+              backgroundColor: isSearchActive ? palette.accentColor : nodeSurface,
+              borderColor: palette.accentColor,
+              shadowColor: palette.accentColor,
+            },
+          ]}
+          onPress={onSearchToggle}
+          activeOpacity={0.82}
+        >
+          <SearchIcon color={isSearchActive ? nodeSurface : palette.textPrimary} size={18} />
+        </TouchableOpacity>
+      )}
 
       {/* Shake button — bottom-left; resurfaces a random past memory. Hidden
           while the capture screen is up so it can't block the Soil controls. */}
@@ -237,45 +335,49 @@ function GardenLayer({
         </TouchableOpacity>
       )}
 
-      {/* Search bar — hidden while the inspection sheet is open so it doesn't
-          compete for top-of-screen space; query and active state are preserved. */}
-      {isSearchActive && !isInspecting && (
-        <View
-          style={[
-            styles.searchBar,
-            {
-              backgroundColor: nodeSurface,
-              borderColor: palette.accentColor,
-            },
-          ]}
-        >
-          <TextInput
-            style={[styles.searchInput, { color: palette.textPrimary }]}
-            placeholder="Search beans by title..."
-            placeholderTextColor={`${palette.textSecondary}88`}
-            value={searchQuery}
-            onChangeText={onSearchChange}
-            autoFocus
-            returnKeyType="search"
-            selectionColor={palette.accentColor}
-          />
-          {/* Ladybug filter — same button as favouriting an entry, for
-              consistency. Shows only favourited ("Ladybugged") beans. */}
-          <LadybugToggle
-            active={favoritesOnly}
-            onToggle={onToggleFavorites}
-            outlineColor={palette.textSecondary}
-          />
-          {searchQuery.length > 0 && (
-            <TouchableOpacity
-              onPress={() => onSearchChange('')}
-              hitSlop={10}
-              activeOpacity={0.7}
-            >
-              <Text style={[styles.searchClearIcon, { color: palette.textSecondary }]}>✕</Text>
-            </TouchableOpacity>
-          )}
-        </View>
+      {/* Search bar — hidden while the inspection sheet or capture screen is
+          open; query and active state are preserved. */}
+      {isSearchActive && !isInspecting && gardenVisible && (
+        <>
+          <View
+            style={[
+              styles.searchBar,
+              {
+                backgroundColor: nodeSurface,
+                borderColor: palette.accentColor,
+              },
+            ]}
+          >
+            <TextInput
+              style={[styles.searchInput, { color: palette.textPrimary }]}
+              placeholder="Search beans by title..."
+              placeholderTextColor={`${palette.textSecondary}88`}
+              value={searchQuery}
+              onChangeText={onSearchChange}
+              autoFocus
+              returnKeyType="search"
+              selectionColor={palette.accentColor}
+            />
+            {/* Ladybug filter — same button as favouriting an entry, for
+                consistency. Shows only favourited ("Ladybugged") beans. */}
+            <LadybugToggle
+              active={favoritesOnly}
+              onToggle={onToggleFavorites}
+              outlineColor={palette.textSecondary}
+            />
+          </View>
+
+          {/* Close search — plain ✕ outside the box; drops the keyboard and
+              exits search (which also clears the query). */}
+          <TouchableOpacity
+            style={styles.searchClose}
+            onPress={() => { Keyboard.dismiss(); onSearchToggle(); }}
+            hitSlop={12}
+            activeOpacity={0.7}
+          >
+            <Text style={[styles.searchCloseIcon, { color: palette.textSecondary }]}>✕</Text>
+          </TouchableOpacity>
+        </>
       )}
 
       {/* FAB — dark biome surface + neon accent outline (cartoon style) */}
@@ -319,6 +421,7 @@ export default function MainContainer() {
   // Clerk-verified user ID — guaranteed non-null here because RootGate only
   // renders MainContainer when isSignedIn === true.
   const { userId } = useAuth();
+  const { user } = useUser();
 
   // Active stalk + its biome theme drive data loading and the entire canvas.
   const { activeStalkId, biome } = useStalk();
@@ -329,6 +432,7 @@ export default function MainContainer() {
   // so a shake only recalls a memory while the user is viewing the garden.
   const [gardenVisible, setGardenVisible] = useState(true);
   const [inspectedBean, setInspectedBean] = useState<Bean | null>(null);
+  const [accountMenuOpen, setAccountMenuOpen] = useState(false);
 
   // ── Search state ─────────────────────────────────────────────────────────
   const [isSearchActive, setIsSearchActive] = useState(false);
@@ -354,6 +458,15 @@ export default function MainContainer() {
     });
   }, []);
 
+  // Fully exit search (used when another menu opens, e.g. the stalk switcher,
+  // so the two never overlap). Resets filters and drops the keyboard.
+  const closeSearch = useCallback(() => {
+    setIsSearchActive(false);
+    setSearchQuery('');
+    setFavoritesOnly(false);
+    Keyboard.dismiss();
+  }, []);
+
   // Safe-Shake memory selection scoped to the active stalk.
   const { memory, reveal, dismiss } = useShakeMemory(activeStalkId);
 
@@ -365,6 +478,12 @@ export default function MainContainer() {
   const flashbackBusyRef = useRef(false);
 
   const revealFlashback = useCallback(async () => {
+    // A little "shake" — two quick light taps for tactile feedback on press.
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light).catch(() => {});
+    setTimeout(() => {
+      Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light).catch(() => {});
+    }, 90);
+
     if (flashbackBusyRef.current) return;
     flashbackBusyRef.current = true;
     try {
@@ -490,6 +609,21 @@ export default function MainContainer() {
     [refresh, userId, beans],
   );
 
+  // ── Bean delete handler — removes locally, refreshes, mirrors to cloud ─────
+
+  const handleBeanDelete = useCallback(
+    async (id: string) => {
+      try {
+        await deleteBean(id);
+        await refresh();
+        if (userId) deleteBeanFromCloud(id, userId); // fire-and-forget
+      } catch (e) {
+        console.warn('[Beanstalk] deleteBean failed:', e);
+      }
+    },
+    [refresh, userId],
+  );
+
   // ── Flashback favourite — local write + background Supabase sync ──────────
 
   const handleFlashbackFavorite = useCallback(
@@ -585,6 +719,9 @@ export default function MainContainer() {
           loading={loading}
           biome={biome}
           gardenVisible={gardenVisible}
+          accountInitial={accountInitial(user)}
+          accountKind={avatarKind(user)}
+          onOpenAccount={() => { closeSearch(); setAccountMenuOpen(true); }}
           onFabPress={openSoil}
           onPressBean={setInspectedBean}
           isSearchActive={isSearchActive}
@@ -594,6 +731,7 @@ export default function MainContainer() {
           onSearchToggle={handleSearchToggle}
           onSearchChange={setSearchQuery}
           onToggleFavorites={() => setFavoritesOnly(v => !v)}
+          onStalkMenuOpen={closeSearch}
           onFlashback={revealFlashback}
           vineRef={vineRef}
         />
@@ -623,6 +761,7 @@ export default function MainContainer() {
           biome={biome}
           onClose={() => setInspectedBean(null)}
           onUpdate={handleBeanUpdate}
+          onDelete={handleBeanDelete}
         />
 
         {/* Shake-recalled memory — overlays everything, scales up from centre */}
@@ -635,6 +774,13 @@ export default function MainContainer() {
           onClose={() => setFlashbackBean(null)}
           onToggleFavorite={handleFlashbackFavorite}
           onJumpToBean={handleJumpToBean}
+        />
+
+        {/* Account menu — personal info, log out, delete account */}
+        <AccountMenu
+          visible={accountMenuOpen}
+          biome={biome}
+          onClose={() => setAccountMenuOpen(false)}
         />
       </View>
     </GestureDetector>
@@ -695,6 +841,25 @@ const styles = StyleSheet.create({
     fontWeight: '300',
   },
 
+  // ── Account button ────────────────────────────────────────────────────────
+  accountBtn: {
+    position: 'absolute',
+    top: 52,
+    left: 16,
+    width: 38,
+    height: 38,
+    borderRadius: 19,
+    borderWidth: 3,
+    alignItems: 'center',
+    justifyContent: 'center',
+    zIndex: 51,
+    // Flat cartoon shadow
+    shadowOffset: { width: 3, height: 3 },
+    shadowOpacity: 0.35,
+    shadowRadius: 0,
+    elevation: 6,
+  },
+
   // ── Search button ─────────────────────────────────────────────────────────
   searchBtn: {
     position: 'absolute',
@@ -712,10 +877,6 @@ const styles = StyleSheet.create({
     shadowOpacity: 0.35,
     shadowRadius: 0,
     elevation: 6,
-  },
-  searchBtnIcon: {
-    fontSize: 15,
-    lineHeight: 18,
   },
 
   // ── Shake button ────────────────────────────────────────────────────────────
@@ -748,7 +909,7 @@ const styles = StyleSheet.create({
     position: 'absolute',
     top: 104,
     left: 16,
-    right: 16,
+    right: 54, // leaves room for the close ✕ that sits outside the box
     flexDirection: 'row',
     alignItems: 'center',
     borderRadius: 18,
@@ -769,10 +930,21 @@ const styles = StyleSheet.create({
     fontWeight: '400',
     paddingVertical: 0,
   },
-  searchClearIcon: {
-    fontSize: 14,
+  // Plain ✕ to the right of the search box, vertically centred with it.
+  searchClose: {
+    position: 'absolute',
+    top: 104,
+    right: 10,
+    width: 34,
+    height: 59,
+    alignItems: 'center',
+    justifyContent: 'center',
+    zIndex: 52,
+  },
+  searchCloseIcon: {
+    fontSize: 20,
     fontWeight: '600',
-    lineHeight: 18,
+    lineHeight: 24,
   },
 
   // ── Empty search state ────────────────────────────────────────────────────

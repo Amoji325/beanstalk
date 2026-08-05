@@ -110,8 +110,9 @@ export type BiomeTheme =
   | 'standard'        // Default lush green
   | 'neon_night'      // Dark bg, luminous accents
   | 'bonsai_oasis'    // Zen, minimal, earthy
-  | 'cosmic_vineyard' // Deep space, star-field backdrop
-  | 'music_journey';  // Cartoon-illustrative: charcoal + lavender + neon magenta
+  | 'cosmic_vineyard'  // Deep space, star-field backdrop
+  | 'ocean_depths'     // Deep dark navy + azure
+  | 'cherry_blossom';  // Soft light: sakura pinks + rose
 
 /** Premium unlock status for a biome theme. */
 export type BiomeUnlockStatus = 'free' | 'premium_unlocked' | 'premium_locked';
@@ -169,7 +170,7 @@ export interface StalkGrowthStats {
  */
 export interface StalkBiome {
   id: string;
-  name: string; // e.g. "Daily Garden", "Music Journey"
+  name: string; // e.g. "Daily Garden", "Neon Night"
   theme: BiomeTheme;
   unlockStatus: BiomeUnlockStatus;
   palette: BiomePalette;

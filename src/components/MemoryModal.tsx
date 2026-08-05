@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useState } from 'react';
 import {
   Image,
   Pressable,
@@ -14,6 +14,7 @@ import Animated, {
   ZoomOut,
 } from 'react-native-reanimated';
 import { useAudioPlayer, useAudioPlayerStatus } from 'expo-audio';
+import { FullscreenImageViewer } from '@src/components/HistoryVine';
 import type { Bean } from '@src/types';
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
@@ -78,7 +79,7 @@ function VoiceMemoryPlayer({ uri, fallbackDuration }: { uri: string; fallbackDur
 
 // ─── Memory Body (type-aware) ─────────────────────────────────────────────────
 
-function MemoryBody({ bean }: { bean: Bean }) {
+function MemoryBody({ bean, onOpenImage }: { bean: Bean; onOpenImage: (uri: string) => void }) {
   switch (bean.type) {
     case 'type':
       return (
@@ -90,7 +91,9 @@ function MemoryBody({ bean }: { bean: Bean }) {
     case 'photo': {
       const uri = bean.imageUri ?? bean.thumbnailUri;
       return uri ? (
-        <Image source={{ uri }} style={styles.bodyImage} resizeMode="cover" />
+        <Pressable onPress={() => onOpenImage(uri)}>
+          <Image source={{ uri }} style={styles.bodyImage} resizeMode="cover" />
+        </Pressable>
       ) : (
         <View style={styles.bodyImagePlaceholder}>
           <Text style={styles.placeholderGlyph}>⚘</Text>
@@ -120,7 +123,9 @@ function MemoryBody({ bean }: { bean: Bean }) {
     case 'scan': {
       const scanUri = bean.scanPageUris?.[0] ?? bean.scanThumbnailUri;
       return scanUri ? (
-        <Image source={{ uri: scanUri }} style={styles.bodyImage} resizeMode="cover" />
+        <Pressable onPress={() => onOpenImage(scanUri)}>
+          <Image source={{ uri: scanUri }} style={styles.bodyImage} resizeMode="cover" />
+        </Pressable>
       ) : (
         <Text style={styles.bodyText}>
           {bean.scannedText || bean.caption || '(scanned page)'}
@@ -144,6 +149,10 @@ interface MemoryModalProps {
  * the conditional unmount.
  */
 export default function MemoryModal({ bean, onClose }: MemoryModalProps) {
+  // Fullscreen zoom viewer target (photo / scan page). Declared before the early
+  // return so hook order stays stable across renders.
+  const [viewerUri, setViewerUri] = useState<string | null>(null);
+
   if (!bean) return null;
 
   const meta = TYPE_META[bean.type];
@@ -173,7 +182,7 @@ export default function MemoryModal({ bean, onClose }: MemoryModalProps) {
 
         {/* Body */}
         <View style={styles.body}>
-          <MemoryBody bean={bean} />
+          <MemoryBody bean={bean} onOpenImage={setViewerUri} />
         </View>
 
         {/* Footer */}
@@ -181,6 +190,9 @@ export default function MemoryModal({ bean, onClose }: MemoryModalProps) {
           <Text style={styles.closeLabel}>Let it fall</Text>
         </TouchableOpacity>
       </Animated.View>
+
+      {/* Tap a photo / scanned page to view it fullscreen & zoom */}
+      <FullscreenImageViewer uris={viewerUri ? [viewerUri] : null} onClose={() => setViewerUri(null)} />
     </Animated.View>
   );
 }

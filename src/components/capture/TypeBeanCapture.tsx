@@ -64,7 +64,7 @@ export default function TypeBeanCapture({ stalkId, biome, onCapture }: TypeBeanC
             },
           ]}
           placeholder="Name your bean..."
-          placeholderTextColor={`${palette.textSecondary}55`}
+          placeholderTextColor={`${palette.accentColor}B3`}
           value={title}
           onChangeText={setTitle}
           maxLength={TITLE_MAX}
@@ -81,7 +81,7 @@ export default function TypeBeanCapture({ stalkId, biome, onCapture }: TypeBeanC
           style={[styles.input, { color: palette.textPrimary }]}
           multiline
           placeholder="What's growing in your mind today?"
-          placeholderTextColor={`${palette.textSecondary}55`}
+          placeholderTextColor={`${palette.accentColor}B3`}
           value={text}
           onChangeText={setText}
           autoFocus={false}

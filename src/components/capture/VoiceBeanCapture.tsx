@@ -326,7 +326,9 @@ export default function VoiceBeanCapture({ stalkId, biome, onCapture }: VoiceBea
 
     try {
       await recorder.stop();
-      await setAudioModeAsync({ allowsRecording: false });
+      // Leave recording mode but keep silent-switch playback on, so the staged
+      // preview (and later timeline / shake) is audible without re-arming it.
+      await setAudioModeAsync({ allowsRecording: false, playsInSilentMode: true });
 
       const postStatus = recorder.getStatus();
       const uri = postStatus.url ?? capturedUrlRef.current;

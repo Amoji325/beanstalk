@@ -1,5 +1,6 @@
-import React, { useRef, useState } from 'react';
+import React, { useState } from 'react';
 import {
+  Alert,
   Dimensions,
   Image,
   KeyboardAvoidingView,
@@ -9,22 +10,43 @@ import {
   Text,
   TextInput,
   TouchableOpacity,
+  TurboModuleRegistry,
   View,
 } from 'react-native';
-import { CameraView, useCameraPermissions } from 'expo-camera';
 import { launchImageLibraryAsync } from 'expo-image-picker';
+import type { ScanDocumentResponse } from 'react-native-document-scanner-plugin';
 import type { BiomeConfig } from '@src/constants';
 import type { Bean } from '@src/types';
 
+// The scanner is a native TurboModule. We load it lazily (require, not a static
+// import) so a dev build that predates it degrades gracefully to a "needs
+// rebuild" prompt instead of red-screening the whole app at startup. Enum values
+// are inlined ('imageFilePath' / 'cancel') to avoid importing the module here.
+type ScannerModule = {
+  scanDocument(opts: {
+    croppedImageQuality?: number;
+    responseType?: string;
+    maxNumDocuments?: number;
+  }): Promise<ScanDocumentResponse>;
+};
+
+function loadScanner(): ScannerModule | null {
+  // get() returns null (never throws) when the native module is absent, so we
+  // detect a stale build *before* require() triggers the package's getEnforcing
+  // call — which would otherwise red-screen in dev even inside a try/catch.
+  if (TurboModuleRegistry.get('DocumentScanner') == null) return null;
+  try {
+    return require('react-native-document-scanner-plugin').default as ScannerModule;
+  } catch {
+    return null; // native module absent in this binary
+  }
+}
+
 // ─── Constants ────────────────────────────────────────────────────────────────
 
-const { width: SCREEN_WIDTH, height: SCREEN_HEIGHT } = Dimensions.get('window');
-const SCAN_FRAME_WIDTH = SCREEN_WIDTH * 0.82;
-const SCAN_FRAME_HEIGHT = SCREEN_HEIGHT * 0.34;
-const CORNER_SIZE = 22;
-const CORNER_THICKNESS = 3;
-const SHADOW_OFF = 4;
+const { height: SCREEN_HEIGHT } = Dimensions.get('window');
 const PLANT_H = 52;
+const SHADOW_OFF = 4;
 const TITLE_MAX = 25;
 
 // ─── Types ────────────────────────────────────────────────────────────────────
@@ -35,454 +57,327 @@ interface ScanBeanCaptureProps {
   onCapture?: (bean: Omit<Bean, 'id'>) => void;
 }
 
-type StagedScan = { uri: string };
-
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
-function makeScanBean(stalkId: string, uri: string): Omit<Bean, 'id'> {
+/** The native scanner returns bare file paths on some platforms — normalise to a URI. */
+function toUri(path: string): string {
+  if (/^[a-z]+:\/\//i.test(path)) return path; // already file:// / content:// / http(s)://
+  return `file://${path}`;
+}
+
+function makeScanBean(stalkId: string, pages: string[], title: string): Omit<Bean, 'id'> {
   return {
     stalkId,
     type: 'scan',
     anatomyRole: 'root',
     createdAt: Date.now(),
-    scanThumbnailUri: uri,
-    scannedText: '',
-    transcriptionStatus: 'pending',
+    // Page 1 doubles as the timeline thumbnail + the cloud-synced artifact.
+    scanThumbnailUri: pages[0],
+    scanPageUris: pages,
+    title: title.trim() || undefined,
   };
-}
-
-// ─── Scan Frame Corner ────────────────────────────────────────────────────────
-
-interface CornerProps {
-  position: 'tl' | 'tr' | 'bl' | 'br';
-  color: string;
-}
-
-function FrameCorner({ position, color }: CornerProps) {
-  const isTop = position === 'tl' || position === 'tr';
-  const isLeft = position === 'tl' || position === 'bl';
-  return (
-    <View
-      style={[
-        styles.corner,
-        isTop ? styles.cornerTop : styles.cornerBottom,
-        isLeft ? styles.cornerLeft : styles.cornerRight,
-        {
-          borderColor: color,
-          borderTopWidth: isTop ? CORNER_THICKNESS : 0,
-          borderBottomWidth: !isTop ? CORNER_THICKNESS : 0,
-          borderLeftWidth: isLeft ? CORNER_THICKNESS : 0,
-          borderRightWidth: !isLeft ? CORNER_THICKNESS : 0,
-        },
-      ]}
-    />
-  );
 }
 
 // ─── Component ────────────────────────────────────────────────────────────────
 
 export default function ScanBeanCapture({ stalkId, biome, onCapture }: ScanBeanCaptureProps) {
   const { palette } = biome;
-  const [permission, requestPermission] = useCameraPermissions();
-  const [isCapturing, setIsCapturing] = useState(false);
-  const [staged, setStaged] = useState<StagedScan | null>(null);
+  const [pages, setPages] = useState<string[]>([]);
   const [title, setTitle] = useState('');
-  const cameraRef = useRef<CameraView>(null);
+  const [isScanning, setIsScanning] = useState(false);
 
-  // ── Capture / pick ────────────────────────────────────────────────────────
+  // ── Capture ─────────────────────────────────────────────────────────────────
+  // Opens the OS document scanner (VisionKit on iOS, ML Kit on Android): auto
+  // edge-detection, perspective crop, glare cleanup, multi-page. Returns cleaned
+  // page images which we append to the staged set.
 
-  const handleScan = async () => {
-    if (!cameraRef.current || isCapturing) return;
-    setIsCapturing(true);
+  const openScanner = async () => {
+    if (isScanning) return;
+
+    const scanner = loadScanner();
+    if (!scanner) {
+      Alert.alert(
+        'Scanner needs a rebuild',
+        'The document scanner isn’t part of this app build yet. Rebuild the dev client (eas build --profile development) to enable page scanning.',
+      );
+      return;
+    }
+
+    setIsScanning(true);
     try {
-      const photo = await cameraRef.current.takePictureAsync({ quality: 0.9 });
-      if (photo?.uri) setStaged({ uri: photo.uri });
+      const { scannedImages, status } = await scanner.scanDocument({
+        croppedImageQuality: 90,
+        responseType: 'imageFilePath',
+      });
+      if (status === 'cancel') return; // user backed out
+      if (scannedImages?.length) {
+        setPages((prev) => [...prev, ...scannedImages.map(toUri)]);
+      }
+    } catch (e) {
+      console.warn('[Beanstalk] document scan failed:', e);
+      Alert.alert('Scan failed', 'The page couldn’t be scanned. Please try again.');
     } finally {
-      setIsCapturing(false);
+      setIsScanning(false);
     }
   };
 
-  const handleGalleryPick = async () => {
-    const result = await launchImageLibraryAsync({
-      mediaTypes: ['images'],
-      quality: 0.9,
-      allowsEditing: false,
-    });
-    if (result.canceled || !result.assets?.[0]?.uri) return;
-    setStaged({ uri: result.assets[0].uri });
+  const addFromLibrary = async () => {
+    try {
+      const result = await launchImageLibraryAsync({
+        mediaTypes: ['images'],
+        quality: 0.9,
+        allowsEditing: false,
+      });
+      if (result.canceled || !result.assets?.[0]?.uri) return;
+      setPages((prev) => [...prev, result.assets[0].uri]);
+    } catch {
+      Alert.alert('Photo library error', 'That image couldn’t be added. Please try another.');
+    }
   };
 
   // ── Plant / discard ───────────────────────────────────────────────────────
 
-  const handlePlant = () => {
-    if (!staged) return;
-    onCapture?.({ ...makeScanBean(stalkId, staged.uri), title: title.trim() || undefined });
-    setStaged(null);
+  const reset = () => {
+    setPages([]);
     setTitle('');
   };
 
-  // ── Render: staged preview ────────────────────────────────────────────────
+  const removePage = (index: number) => {
+    setPages((prev) => prev.filter((_, i) => i !== index));
+  };
 
-  if (staged) {
-    return (
-      <KeyboardAvoidingView
-        style={[styles.root, { backgroundColor: palette.backgroundEnd }]}
-        behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
-      >
-        {/* Scrollable content: thumbnail + text extract area */}
-        <ScrollView
-          style={styles.previewScroll}
-          contentContainerStyle={styles.previewContent}
-          showsVerticalScrollIndicator={false}
-        >
-          {/* Scanned page thumbnail */}
-          <View style={styles.thumbnailWrap}>
-            <Image
-              source={{ uri: staged.uri }}
-              style={styles.thumbnail}
-              resizeMode="contain"
-            />
-          </View>
+  const handlePlant = () => {
+    if (pages.length === 0) return;
+    onCapture?.(makeScanBean(stalkId, pages, title));
+    reset();
+  };
 
-          {/* Divider */}
-          <View
-            style={[
-              styles.divider,
-              { backgroundColor: `${palette.textSecondary}22` },
-            ]}
-          />
+  // ── Render: empty state (no pages staged yet) ───────────────────────────────
 
-          {/* Extracted text area */}
-          <View style={styles.textArea}>
-            <Text
-              style={[styles.textAreaLabel, { color: `${palette.textSecondary}99` }]}
-            >
-              EXTRACTED TEXT
-            </Text>
-            <Text style={[styles.textAreaBody, { color: `${palette.textSecondary}77` }]}>
-              Text will be extracted from this page after planting.
-            </Text>
-          </View>
-        </ScrollView>
-
-        {/* Fixed action bar */}
-        <View
-          style={[
-            styles.actionBar,
-            { backgroundColor: palette.backgroundEnd },
-          ]}
-        >
-          {/* Title input */}
-          <TextInput
-            style={[
-              styles.titleInput,
-              {
-                color: palette.textPrimary,
-                borderColor: `${palette.textSecondary}44`,
-                backgroundColor: `${palette.textPrimary}08`,
-              },
-            ]}
-            placeholder="Name your bean..."
-            placeholderTextColor={`${palette.textSecondary}55`}
-            value={title}
-            onChangeText={setTitle}
-            maxLength={TITLE_MAX}
-            returnKeyType="done"
-            autoFocus={false}
-            autoCapitalize="words"
-          />
-
-          <View style={styles.plantOuter}>
-            <View
-              style={[
-                styles.plantShadow,
-                { backgroundColor: `${palette.textPrimary}28` },
-              ]}
-            />
-            <TouchableOpacity
-              style={[
-                styles.plantBtn,
-                {
-                  backgroundColor: palette.accentColor,
-                  borderColor: `${palette.textPrimary}BB`,
-                },
-              ]}
-              onPress={handlePlant}
-              activeOpacity={0.85}
-            >
-              <Text style={styles.plantLabel}>Plant Bean</Text>
-            </TouchableOpacity>
-          </View>
-
-          <TouchableOpacity
-            style={[styles.secondaryBtn, { borderColor: `${palette.textSecondary}66` }]}
-            onPress={() => { setStaged(null); setTitle(''); }}
-            activeOpacity={0.7}
-          >
-            <Text style={[styles.secondaryLabel, { color: palette.textSecondary }]}>
-              Rescan
-            </Text>
-          </TouchableOpacity>
-        </View>
-      </KeyboardAvoidingView>
-    );
-  }
-
-  // ── Render: permission gate ────────────────────────────────────────────────
-
-  if (!permission?.granted) {
+  if (pages.length === 0) {
     return (
       <View style={[styles.root, styles.center, { backgroundColor: palette.backgroundEnd }]}>
-        <Text style={[styles.permissionText, { color: palette.textSecondary }]}>
-          Camera access is needed to scan journal pages.
+        <Text style={styles.emptyGlyph}>📄</Text>
+        <Text style={[styles.emptyTitle, { color: palette.textPrimary }]}>
+          Scan a journal page
         </Text>
-        {permission?.canAskAgain !== false && (
-          <TouchableOpacity
-            style={[styles.permissionButton, { backgroundColor: palette.accentColor }]}
-            onPress={requestPermission}
-          >
-            <Text style={styles.permissionButtonLabel}>Grant Access</Text>
-          </TouchableOpacity>
-        )}
-      </View>
-    );
-  }
+        <Text style={[styles.emptyBody, { color: palette.textSecondary }]}>
+          Line up a handwritten page — the edges snap automatically and it’s
+          saved as a clean, readable image.
+        </Text>
 
-  // ── Render: camera scan UI ────────────────────────────────────────────────
-
-  return (
-    <View style={styles.root}>
-      <CameraView ref={cameraRef} style={StyleSheet.absoluteFill} facing="back" />
-
-      {/* Overlay with scan frame cutout */}
-      <View style={styles.overlay} pointerEvents="none">
-        <View style={styles.maskTop} />
-        <View style={styles.maskMiddleRow}>
-          <View style={styles.maskSide} />
-          <View style={styles.scanFrame}>
-            <FrameCorner position="tl" color={palette.accentColor} />
-            <FrameCorner position="tr" color={palette.accentColor} />
-            <FrameCorner position="bl" color={palette.accentColor} />
-            <FrameCorner position="br" color={palette.accentColor} />
-          </View>
-          <View style={styles.maskSide} />
-        </View>
-        <View style={styles.maskBottom}>
-          <Text style={styles.scanHint}>Align handwritten text within the frame</Text>
-        </View>
-      </View>
-
-      {/* Bottom bar: Library + Scan Page */}
-      <View style={styles.bottomBar}>
-        {/* Library button — cartoon outline + flat shadow */}
-        <View style={styles.libOuter}>
-          <View style={styles.libShadow} />
-          <TouchableOpacity style={styles.libBtn} onPress={handleGalleryPick} activeOpacity={0.85}>
-            <Text style={styles.libIcon}>⬆</Text>
-            <Text style={styles.libLabel}>Library</Text>
-          </TouchableOpacity>
-        </View>
-
-        {/* Scan Page button */}
         <TouchableOpacity
-          style={[
-            styles.scanButton,
-            { backgroundColor: palette.accentColor },
-            isCapturing && styles.scanButtonBusy,
-          ]}
-          onPress={handleScan}
-          disabled={isCapturing}
+          style={[styles.scanButton, { backgroundColor: palette.accentColor }, isScanning && styles.busy]}
+          onPress={openScanner}
+          disabled={isScanning}
           activeOpacity={0.85}
         >
-          <Text style={styles.scanButtonLabel}>
-            {isCapturing ? 'Scanning…' : 'Scan Page'}
+          <Text style={styles.scanButtonLabel}>{isScanning ? 'Opening…' : 'Scan a Page'}</Text>
+        </TouchableOpacity>
+
+        <TouchableOpacity onPress={addFromLibrary} activeOpacity={0.7} hitSlop={8}>
+          <Text style={[styles.libraryLink, { color: palette.textSecondary }]}>
+            Choose from library
           </Text>
         </TouchableOpacity>
       </View>
-    </View>
+    );
+  }
+
+  // ── Render: staged pages preview ────────────────────────────────────────────
+
+  return (
+    <KeyboardAvoidingView
+      style={[styles.root, { backgroundColor: palette.backgroundEnd }]}
+      behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+    >
+      <ScrollView
+        style={styles.previewScroll}
+        contentContainerStyle={styles.previewContent}
+        showsVerticalScrollIndicator={false}
+      >
+        <Text style={[styles.pageCount, { color: `${palette.textSecondary}99` }]}>
+          {pages.length === 1 ? '1 PAGE' : `${pages.length} PAGES`}
+        </Text>
+
+        {pages.map((uri, i) => (
+          <View key={`${uri}-${i}`} style={styles.pageWrap}>
+            <Image source={{ uri }} style={styles.pageImage} resizeMode="contain" />
+            <TouchableOpacity
+              style={styles.removeBadge}
+              onPress={() => removePage(i)}
+              hitSlop={8}
+              activeOpacity={0.8}
+            >
+              <Text style={styles.removeBadgeLabel}>✕</Text>
+            </TouchableOpacity>
+          </View>
+        ))}
+
+        <TouchableOpacity
+          style={[styles.addPageBtn, { borderColor: palette.accentColor }, isScanning && styles.busy]}
+          onPress={openScanner}
+          disabled={isScanning}
+          activeOpacity={0.8}
+        >
+          <Text style={[styles.addPageLabel, { color: palette.accentColor }]}>
+            {isScanning ? 'Opening…' : '＋ Add another page'}
+          </Text>
+        </TouchableOpacity>
+      </ScrollView>
+
+      {/* Fixed action bar */}
+      <View style={[styles.actionBar, { backgroundColor: palette.backgroundEnd }]}>
+        <TextInput
+          style={[
+            styles.titleInput,
+            {
+              color: palette.textPrimary,
+              borderColor: `${palette.textSecondary}44`,
+              backgroundColor: `${palette.textPrimary}08`,
+            },
+          ]}
+          placeholder="Name this entry..."
+          placeholderTextColor={`${palette.textSecondary}55`}
+          value={title}
+          onChangeText={setTitle}
+          maxLength={TITLE_MAX}
+          returnKeyType="done"
+          autoFocus={false}
+          autoCapitalize="words"
+        />
+
+        <View style={styles.plantOuter}>
+          <View style={[styles.plantShadow, { backgroundColor: `${palette.textPrimary}28` }]} />
+          <TouchableOpacity
+            style={[
+              styles.plantBtn,
+              { backgroundColor: palette.accentColor, borderColor: `${palette.textPrimary}BB` },
+            ]}
+            onPress={handlePlant}
+            activeOpacity={0.85}
+          >
+            <Text style={styles.plantLabel}>Plant Bean</Text>
+          </TouchableOpacity>
+        </View>
+
+        <TouchableOpacity
+          style={[styles.secondaryBtn, { borderColor: `${palette.textSecondary}66` }]}
+          onPress={reset}
+          activeOpacity={0.7}
+        >
+          <Text style={[styles.secondaryLabel, { color: palette.textSecondary }]}>
+            Start over
+          </Text>
+        </TouchableOpacity>
+      </View>
+    </KeyboardAvoidingView>
   );
 }
 
 // ─── Styles ───────────────────────────────────────────────────────────────────
 
-const MASK_ALPHA = 'rgba(0,0,0,0.62)';
-
 const styles = StyleSheet.create({
   root: {
     flex: 1,
-    backgroundColor: '#000',
   },
   center: {
     alignItems: 'center',
     justifyContent: 'center',
-    gap: 20,
-    paddingHorizontal: 40,
-  },
-  permissionText: {
-    fontSize: 15,
-    textAlign: 'center',
-    lineHeight: 22,
-  },
-  permissionButton: {
-    paddingHorizontal: 28,
-    paddingVertical: 12,
-    borderRadius: 24,
-  },
-  permissionButtonLabel: {
-    color: '#fff',
-    fontSize: 15,
-    fontWeight: '600',
-  },
-
-  // ── Preview layout ────────────────────────────────────────────────────────
-  previewScroll: {
-    flex: 1,
-  },
-  previewContent: {
-    paddingTop: 24,
-    paddingBottom: 8,
-  },
-  thumbnailWrap: {
-    height: SCREEN_HEIGHT * 0.42,
-    marginHorizontal: 20,
-    borderRadius: 12,
-    overflow: 'hidden',
-    backgroundColor: '#000',
-  },
-  thumbnail: {
-    flex: 1,
-    width: '100%',
-  },
-  divider: {
-    height: 1,
-    marginHorizontal: 24,
-    marginVertical: 20,
-  },
-  textArea: {
-    marginHorizontal: 24,
-    marginBottom: 16,
-    gap: 10,
-  },
-  textAreaLabel: {
-    fontSize: 10,
-    fontWeight: '700',
-    letterSpacing: 1.5,
-  },
-  textAreaBody: {
-    fontSize: 15,
-    lineHeight: 24,
-    fontStyle: 'italic',
-  },
-
-  // ── Overlay ───────────────────────────────────────────────────────────────
-  overlay: {
-    ...StyleSheet.absoluteFill,
-    flexDirection: 'column',
-  },
-  maskTop: {
-    flex: 1,
-    backgroundColor: MASK_ALPHA,
-  },
-  maskMiddleRow: {
-    flexDirection: 'row',
-    height: SCAN_FRAME_HEIGHT,
-  },
-  maskSide: {
-    flex: 1,
-    backgroundColor: MASK_ALPHA,
-  },
-  scanFrame: {
-    width: SCAN_FRAME_WIDTH,
-    height: SCAN_FRAME_HEIGHT,
-    position: 'relative',
-  },
-  maskBottom: {
-    flex: 1,
-    backgroundColor: MASK_ALPHA,
-    alignItems: 'center',
-    paddingTop: 16,
-  },
-  scanHint: {
-    color: 'rgba(255,255,255,0.45)',
-    fontSize: 13,
-    letterSpacing: 0.3,
-  },
-
-  // ── Corner ────────────────────────────────────────────────────────────────
-  corner: {
-    position: 'absolute',
-    width: CORNER_SIZE,
-    height: CORNER_SIZE,
-  },
-  cornerTop: { top: 0 },
-  cornerBottom: { bottom: 0 },
-  cornerLeft: { left: 0 },
-  cornerRight: { right: 0 },
-
-  // ── Bottom bar (camera mode) ──────────────────────────────────────────────
-  bottomBar: {
-    position: 'absolute',
-    bottom: 28,
-    left: 0,
-    right: 0,
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
     gap: 16,
+    paddingHorizontal: 36,
   },
 
-  // ── Library button (cartoon pill) ────────────────────────────────────────
-  libOuter: {
-    // Sized by libBtn (normal flow child). Shadow overflows via position:absolute.
+  // ── Empty state ─────────────────────────────────────────────────────────────
+  emptyGlyph: {
+    fontSize: 56,
   },
-  libShadow: {
-    position: 'absolute',
-    top: SHADOW_OFF,
-    left: SHADOW_OFF,
-    right: -SHADOW_OFF,
-    bottom: -SHADOW_OFF,
-    borderRadius: 24,
-    backgroundColor: 'rgba(0,0,0,0.45)',
-  },
-  libBtn: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 6,
-    paddingHorizontal: 20,
-    paddingVertical: 12,
-    borderRadius: 24,
-    borderWidth: 3,
-    borderColor: 'rgba(255,255,255,0.85)',
-    backgroundColor: 'rgba(255,255,255,0.12)',
-  },
-  libIcon: {
-    color: '#fff',
-    fontSize: 16,
-    lineHeight: 20,
-  },
-  libLabel: {
-    color: '#fff',
-    fontSize: 15,
+  emptyTitle: {
+    fontSize: 20,
     fontWeight: '700',
-    letterSpacing: 0.3,
+    letterSpacing: 0.2,
   },
-
-  // ── Scan Page button ──────────────────────────────────────────────────────
+  emptyBody: {
+    fontSize: 15,
+    lineHeight: 22,
+    textAlign: 'center',
+  },
   scanButton: {
+    marginTop: 8,
     paddingHorizontal: 40,
     paddingVertical: 14,
     borderRadius: 28,
-  },
-  scanButtonBusy: {
-    opacity: 0.55,
   },
   scanButtonLabel: {
     color: '#fff',
     fontSize: 16,
     fontWeight: '600',
   },
+  busy: {
+    opacity: 0.55,
+  },
+  libraryLink: {
+    fontSize: 14,
+    fontWeight: '500',
+    textDecorationLine: 'underline',
+  },
 
-  // ── Action bar (preview footer) ───────────────────────────────────────────
+  // ── Preview layout ──────────────────────────────────────────────────────────
+  previewScroll: {
+    flex: 1,
+  },
+  previewContent: {
+    paddingTop: 24,
+    paddingHorizontal: 20,
+    paddingBottom: 8,
+    gap: 16,
+  },
+  pageCount: {
+    fontSize: 10,
+    fontWeight: '700',
+    letterSpacing: 1.5,
+  },
+  pageWrap: {
+    height: SCREEN_HEIGHT * 0.42,
+    borderRadius: 12,
+    overflow: 'hidden',
+    backgroundColor: '#000',
+  },
+  pageImage: {
+    flex: 1,
+    width: '100%',
+  },
+  removeBadge: {
+    position: 'absolute',
+    top: 8,
+    right: 8,
+    width: 30,
+    height: 30,
+    borderRadius: 15,
+    backgroundColor: 'rgba(0,0,0,0.6)',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  removeBadgeLabel: {
+    color: '#fff',
+    fontSize: 14,
+    fontWeight: '700',
+    lineHeight: 16,
+  },
+  addPageBtn: {
+    borderWidth: 2,
+    borderStyle: 'dashed',
+    borderRadius: 14,
+    paddingVertical: 16,
+    alignItems: 'center',
+  },
+  addPageLabel: {
+    fontSize: 15,
+    fontWeight: '700',
+    letterSpacing: 0.3,
+  },
+
+  // ── Action bar ──────────────────────────────────────────────────────────────
   actionBar: {
     paddingHorizontal: 24,
     paddingTop: 12,

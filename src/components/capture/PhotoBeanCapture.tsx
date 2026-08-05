@@ -9,6 +9,8 @@ import {
   TouchableOpacity,
   View,
 } from 'react-native';
+import { Gesture, GestureDetector } from 'react-native-gesture-handler';
+import { runOnJS } from 'react-native-reanimated';
 import { CameraView, useCameraPermissions } from 'expo-camera';
 import { launchImageLibraryAsync } from 'expo-image-picker';
 import type { BiomeConfig } from '@src/constants';
@@ -135,6 +137,14 @@ export default function PhotoBeanCapture({ stalkId, biome, onCapture }: PhotoBea
 
   const toggleFacing = () => setFacing(f => f === 'back' ? 'front' : 'back');
 
+  // Double-tap anywhere on the preview flips the camera.
+  const doubleTapFlip = Gesture.Tap()
+    .numberOfTaps(2)
+    .onEnd(() => {
+      'worklet';
+      runOnJS(toggleFacing)();
+    });
+
   // ── Plant / discard ──────────────────────────────────────────────────────────
 
   const handlePlant = () => {
@@ -250,9 +260,15 @@ export default function PhotoBeanCapture({ stalkId, biome, onCapture }: PhotoBea
     <View style={styles.root}>
       <CameraView ref={cameraRef} style={StyleSheet.absoluteFill} facing={facing} />
 
-      {/* Flip button */}
+      {/* Transparent double-tap layer over the preview (below the controls) */}
+      <GestureDetector gesture={doubleTapFlip}>
+        <View style={StyleSheet.absoluteFill} />
+      </GestureDetector>
+
+      {/* Flip button — labelled pill so it's unmistakable */}
       <TouchableOpacity style={styles.flipButton} onPress={toggleFacing} activeOpacity={0.8}>
-        <Text style={styles.flipIcon}>↺</Text>
+        <Text style={styles.flipIcon}>🔄</Text>
+        <Text style={styles.flipLabel}>Flip</Text>
       </TouchableOpacity>
 
       {/* Bottom bar: gallery + shutter */}
@@ -319,16 +335,25 @@ const styles = StyleSheet.create({
     position: 'absolute',
     top: 56,
     right: 24,
-    width: 44,
-    height: 44,
-    borderRadius: 22,
-    backgroundColor: 'rgba(0,0,0,0.45)',
+    flexDirection: 'row',
     alignItems: 'center',
-    justifyContent: 'center',
+    gap: 6,
+    paddingHorizontal: 14,
+    height: 40,
+    borderRadius: 20,
+    backgroundColor: 'rgba(0,0,0,0.55)',
+    borderWidth: 1.5,
+    borderColor: 'rgba(255,255,255,0.85)',
   },
   flipIcon: {
+    fontSize: 16,
+    lineHeight: 20,
+  },
+  flipLabel: {
     color: '#fff',
-    fontSize: 22,
+    fontSize: 14,
+    fontWeight: '700',
+    letterSpacing: 0.3,
   },
   bottomBar: {
     position: 'absolute',

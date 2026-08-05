@@ -12,6 +12,8 @@ import {
   FlatList,
   Image,
   ListRenderItemInfo,
+  Modal,
+  Pressable,
   ScrollView,
   StyleSheet,
   Text,
@@ -304,7 +306,13 @@ function RootNode({ bean, c, side }: NodeProps) {
     >
       <Text style={[nodeStyles.rootLabel, { color: c.accent }]}>≡ SCAN</Text>
       <Text style={[nodeStyles.rootText, { color: c.textSecondary }]} numberOfLines={1}>
-        {truncate(bean.scannedText || bean.caption, 40)}
+        {truncate(
+          bean.scannedText || bean.caption ||
+            (bean.scanPageUris && bean.scanPageUris.length > 1
+              ? `${bean.scanPageUris.length} scanned pages`
+              : 'Scanned page'),
+          40,
+        )}
       </Text>
       <Text
         style={[nodeStyles.rootDate, { color: c.textSecondary }]}
@@ -1328,66 +1336,185 @@ const playerStyles = StyleSheet.create({
   },
 });
 
+// ─── Self-sizing image ────────────────────────────────────────────────────────
+// Fills the sheet's full width and derives its height from the image's true
+// aspect ratio (measured on load) — so a portrait diary page renders tall and
+// readable instead of squeezed into a fixed box. The parent ScrollView handles
+// any overflow. Falls back to a portrait ratio until the real size is known.
+
+function AutoImage({ uri, style, onPress }: { uri: string; style?: object; onPress?: () => void }) {
+  const [ratio, setRatio] = useState(0.75); // width / height; portrait default
+  const img = (
+    <Image
+      source={{ uri }}
+      style={[{ width: '100%', aspectRatio: ratio, borderRadius: 10 }, style]}
+      resizeMode="contain"
+      onLoad={(e) => {
+        const { width, height } = e.nativeEvent.source;
+        if (width > 0 && height > 0) setRatio(width / height);
+      }}
+    />
+  );
+  return onPress ? (
+    <Pressable onPress={onPress} accessibilityRole="imagebutton">
+      {img}
+    </Pressable>
+  ) : (
+    img
+  );
+}
+
+// ─── Fullscreen zoomable image viewer ─────────────────────────────────────────
+// Tapping a page/photo opens it edge-to-edge. iOS ScrollView gives native
+// pinch-to-zoom + pan for free; the ✕ button (or hardware back) dismisses.
+
+function FullscreenImageViewer({ uri, onClose }: { uri: string | null; onClose: () => void }) {
+  return (
+    <Modal
+      visible={uri !== null}
+      transparent
+      animationType="fade"
+      onRequestClose={onClose}
+      statusBarTranslucent
+    >
+      <View style={viewerStyles.backdrop}>
+        <ScrollView
+          style={StyleSheet.absoluteFill}
+          contentContainerStyle={viewerStyles.content}
+          minimumZoomScale={1}
+          maximumZoomScale={5}
+          centerContent
+          showsVerticalScrollIndicator={false}
+          showsHorizontalScrollIndicator={false}
+        >
+          {uri && (
+            <Image
+              source={{ uri }}
+              style={{ width: SCREEN_WIDTH, height: SCREEN_HEIGHT }}
+              resizeMode="contain"
+            />
+          )}
+        </ScrollView>
+        <TouchableOpacity
+          style={viewerStyles.closeBtn}
+          onPress={onClose}
+          hitSlop={14}
+          activeOpacity={0.8}
+        >
+          <Text style={viewerStyles.closeLabel}>✕</Text>
+        </TouchableOpacity>
+      </View>
+    </Modal>
+  );
+}
+
+const viewerStyles = StyleSheet.create({
+  backdrop: {
+    flex: 1,
+    backgroundColor: 'rgba(0,0,0,0.96)',
+  },
+  content: {
+    flexGrow: 1,
+    justifyContent: 'center',
+  },
+  closeBtn: {
+    position: 'absolute',
+    top: 54,
+    right: 22,
+    width: 40,
+    height: 40,
+    borderRadius: 20,
+    backgroundColor: 'rgba(255,255,255,0.16)',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  closeLabel: {
+    color: '#fff',
+    fontSize: 18,
+    fontWeight: '600',
+    lineHeight: 20,
+  },
+});
+
 // ─── Bean Inspect Body ────────────────────────────────────────────────────────
 
 function BeanInspectBody({ bean, c }: { bean: Bean; c: VineColors }) {
+  // Which image (if any) is open in the fullscreen zoom viewer.
+  const [viewerUri, setViewerUri] = useState<string | null>(null);
+
+  let content: React.ReactNode;
   switch (bean.type) {
     case 'type':
-      return (
+      content = (
         <Text style={[inspectStyles.bodyText, { color: c.textPrimary }]}>
           {bean.textContent ?? ''}
         </Text>
       );
+      break;
     case 'photo':
-      return bean.imageUri ? (
-        <Image
-          source={{ uri: bean.imageUri }}
-          style={inspectStyles.fullImage}
-          resizeMode="contain"
-        />
+      content = bean.imageUri ? (
+        <AutoImage uri={bean.imageUri} onPress={() => setViewerUri(bean.imageUri!)} />
       ) : (
         <Text style={[inspectStyles.emptyHint, { color: c.textSecondary }]}>No image captured.</Text>
       );
+      break;
     case 'voice':
-      if (!bean.audioUri) {
-        return (
-          <View style={inspectStyles.voiceCenter}>
-            <Text style={[inspectStyles.voiceDuration, { color: c.textPrimary }]}>
-              {fmtDuration(bean.audioDurationSeconds)}
-            </Text>
-            <Text style={[inspectStyles.voiceHint, { color: c.textSecondary }]}>
-              Audio file unavailable
-            </Text>
-          </View>
-        );
-      }
-      return (
+      content = !bean.audioUri ? (
+        <View style={inspectStyles.voiceCenter}>
+          <Text style={[inspectStyles.voiceDuration, { color: c.textPrimary }]}>
+            {fmtDuration(bean.audioDurationSeconds)}
+          </Text>
+          <Text style={[inspectStyles.voiceHint, { color: c.textSecondary }]}>
+            Audio file unavailable
+          </Text>
+        </View>
+      ) : (
         <VoicePlayerWidget
           uri={bean.audioUri}
           fallbackDuration={bean.audioDurationSeconds}
           c={c}
         />
       );
-    case 'scan':
-      return (
+      break;
+    case 'scan': {
+      // Prefer the full multi-page set; fall back to the single thumbnail for
+      // beans captured before multi-page scanning existed.
+      const pages = bean.scanPageUris?.length
+        ? bean.scanPageUris
+        : bean.scanThumbnailUri
+          ? [bean.scanThumbnailUri]
+          : [];
+      content = pages.length === 0 ? (
+        <Text style={[inspectStyles.emptyHint, { color: c.textSecondary }]}>
+          No scanned pages.
+        </Text>
+      ) : (
         <>
-          {bean.scanThumbnailUri && (
-            <Image
-              source={{ uri: bean.scanThumbnailUri }}
-              style={inspectStyles.scanThumb}
-              resizeMode="contain"
+          {pages.map((uri, i) => (
+            <AutoImage
+              key={`${uri}-${i}`}
+              uri={uri}
+              style={inspectStyles.scanPage}
+              onPress={() => setViewerUri(uri)}
             />
-          )}
-          {bean.scannedText ? (
+          ))}
+          {!!bean.scannedText && (
             <Text style={[inspectStyles.bodyText, { color: c.textPrimary }]}>
               {bean.scannedText}
             </Text>
-          ) : (
-            <Text style={[inspectStyles.emptyHint, { color: c.textSecondary }]}>OCR pending…</Text>
           )}
         </>
       );
+      break;
+    }
   }
+
+  return (
+    <>
+      {content}
+      <FullscreenImageViewer uri={viewerUri} onClose={() => setViewerUri(null)} />
+    </>
+  );
 }
 
 export interface EntryInspectSheetProps {
@@ -1541,8 +1668,8 @@ const inspectStyles = StyleSheet.create({
     position: 'absolute',
     left: 20,
     right: 20,
-    top: SCREEN_HEIGHT * 0.13,
-    maxHeight: SCREEN_HEIGHT * 0.72,
+    top: SCREEN_HEIGHT * 0.10,
+    maxHeight: SCREEN_HEIGHT * 0.82,
     borderRadius: 18,
     borderTopWidth: 3,
     overflow: 'hidden',
@@ -1608,15 +1735,7 @@ const inspectStyles = StyleSheet.create({
     fontWeight: '300',
     letterSpacing: 0.1,
   },
-  fullImage: {
-    width: '100%',
-    height: 300,
-    borderRadius: 10,
-  },
-  scanThumb: {
-    width: '100%',
-    height: 160,
-    borderRadius: 10,
+  scanPage: {
     marginBottom: 16,
   },
   voiceCenter: {

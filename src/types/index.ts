@@ -61,10 +61,16 @@ export interface Bean {
   thumbnailUri?: string;
 
   // ── Scan bean ──────────────────────────────────────────────────────────────
-  /** OCR-extracted text from the scanned handwritten page. */
+  /** Optional text for the scanned page (e.g. a user note); not auto-extracted. */
   scannedText?: string;
-  /** Thumbnail URI clipped from the physical journal page scan. */
+  /** Primary page image (page 1) — drives the timeline thumbnail + cloud sync. */
   scanThumbnailUri?: string;
+  /**
+   * All cleaned page images for a multi-page scan, in order. Page 1 mirrors
+   * scanThumbnailUri. Stored locally in extendedData; the cloud currently
+   * mirrors only page 1 via scanThumbnailUri.
+   */
+  scanPageUris?: string[];
 
   // ── Cross-cutting metadata ─────────────────────────────────────────────────
   /** Short title / name for the entry (max 25 chars), set at capture time. */

@@ -56,6 +56,7 @@ interface BeanExtendedData {
   anatomyRole?: BeanAnatomyRole;
   thumbnailUri?: string;
   scanThumbnailUri?: string;
+  scanPageUris?: string[];
   audioDurationSeconds?: number;
   transcriptionStatus?: TranscriptionStatus;
   caption?: string;
@@ -194,6 +195,7 @@ function rowToBean(row: BeanRow): Bean {
 
     // Scan
     scanThumbnailUri: sanitizeLocalUri(extended.scanThumbnailUri),
+    scanPageUris: extended.scanPageUris?.map((u) => sanitizeLocalUri(u) ?? u),
 
     // Cross-cutting
     title: row.title ?? undefined,
@@ -253,6 +255,7 @@ function beanToRow(
     anatomyRole: bean.anatomyRole,
     thumbnailUri: bean.thumbnailUri,
     scanThumbnailUri: bean.scanThumbnailUri,
+    scanPageUris: bean.scanPageUris,
     audioDurationSeconds: bean.audioDurationSeconds,
     transcriptionStatus: bean.transcriptionStatus,
     caption: bean.caption,

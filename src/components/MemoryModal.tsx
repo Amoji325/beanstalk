@@ -13,6 +13,7 @@ import Animated, {
   ZoomIn,
   ZoomOut,
 } from 'react-native-reanimated';
+import { useAudioPlayer, useAudioPlayerStatus } from 'expo-audio';
 import type { Bean } from '@src/types';
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
@@ -40,6 +41,41 @@ function fmtFullDate(ts: number): string {
   });
 }
 
+// ─── Voice Memory Player ──────────────────────────────────────────────────────
+// Real playback for shake-recalled voice beans. Uses expo-audio's hook player
+// (same pattern as the timeline's VoicePlayerWidget); global audio mode with
+// playsInSilentMode is configured once at app start so this plays even with the
+// iOS mute switch on. The player is created per-mount and expo-audio releases it
+// automatically on unmount, so a dismissed memory tears its sound down cleanly.
+
+function VoiceMemoryPlayer({ uri, fallbackDuration }: { uri: string; fallbackDuration?: number }) {
+  const player = useAudioPlayer({ uri });
+  const status = useAudioPlayerStatus(player);
+
+  const duration = status.duration > 0 ? status.duration : fallbackDuration ?? 0;
+
+  const handlePlayPause = () => {
+    if (status.playing) {
+      player.pause();
+    } else {
+      // Re-arm from the start once playback has run to the end.
+      if (status.didJustFinish || (duration > 0 && status.currentTime >= duration)) {
+        void player.seekTo(0);
+      }
+      player.play();
+    }
+  };
+
+  return (
+    <View style={styles.voiceWrap}>
+      <TouchableOpacity style={styles.voicePlayButton} onPress={handlePlayPause} activeOpacity={0.85}>
+        <Text style={styles.voicePlayGlyph}>{status.playing ? '❚❚' : '▶'}</Text>
+      </TouchableOpacity>
+      <Text style={styles.voiceDuration}>{fmtDuration(Math.round(duration) || fallbackDuration)}</Text>
+    </View>
+  );
+}
+
 // ─── Memory Body (type-aware) ─────────────────────────────────────────────────
 
 function MemoryBody({ bean }: { bean: Bean }) {
@@ -64,23 +100,33 @@ function MemoryBody({ bean }: { bean: Bean }) {
 
     case 'voice':
       return (
-        <View style={styles.voiceWrap}>
-          <View style={styles.voicePlayButton}>
-            <Text style={styles.voicePlayGlyph}>▶</Text>
-          </View>
-          <Text style={styles.voiceDuration}>{fmtDuration(bean.audioDurationSeconds)}</Text>
+        <View style={styles.voiceColumn}>
+          {bean.audioUri ? (
+            <VoiceMemoryPlayer uri={bean.audioUri} fallbackDuration={bean.audioDurationSeconds} />
+          ) : (
+            <View style={styles.voiceWrap}>
+              <View style={styles.voicePlayButton}>
+                <Text style={styles.voicePlayGlyph}>▶</Text>
+              </View>
+              <Text style={styles.voiceDuration}>{fmtDuration(bean.audioDurationSeconds)}</Text>
+            </View>
+          )}
           {!!bean.transcription && (
             <Text style={styles.bodyText}>{bean.transcription}</Text>
           )}
         </View>
       );
 
-    case 'scan':
-      return (
+    case 'scan': {
+      const scanUri = bean.scanPageUris?.[0] ?? bean.scanThumbnailUri;
+      return scanUri ? (
+        <Image source={{ uri: scanUri }} style={styles.bodyImage} resizeMode="cover" />
+      ) : (
         <Text style={styles.bodyText}>
           {bean.scannedText || bean.caption || '(scanned page)'}
         </Text>
       );
+    }
   }
 }
 
@@ -221,6 +267,10 @@ const styles = StyleSheet.create({
   },
 
   // ── Voice ───────────────────────────────────────────────────────────────────
+  voiceColumn: {
+    gap: 14,
+    alignItems: 'flex-start',
+  },
   voiceWrap: {
     gap: 14,
     alignItems: 'flex-start',

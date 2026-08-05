@@ -54,8 +54,8 @@ function CreateStalkForm({ onSubmit, onCancel }: CreateFormProps) {
         />
 
         <Animated.View
-          entering={ZoomIn.springify().damping(18).stiffness(210)}
-          exiting={ZoomOut.springify().damping(18).stiffness(210)}
+          entering={ZoomIn.springify().damping(24).stiffness(340).mass(0.5)}
+          exiting={ZoomOut.duration(130)}
           style={formStyles.card}
         >
           {/* Header */}
@@ -78,7 +78,7 @@ function CreateStalkForm({ onSubmit, onCancel }: CreateFormProps) {
               value={name}
               onChangeText={setName}
               maxLength={40}
-              autoFocus
+              autoFocus={false}
               returnKeyType="done"
               selectionColor="#56c464"
             />

@@ -87,6 +87,12 @@ export default function DialSlider({ biome }: DialSliderProps) {
     Haptics.selectionAsync();
   };
 
+  // Plain JS wrapper: runOnJS(Keyboard.dismiss) would force the worklet to
+  // capture the native Keyboard object (not serializable to the UI runtime).
+  const dismissKeyboard = () => {
+    Keyboard.dismiss();
+  };
+
   const panGesture = Gesture.Pan()
     .minDistance(4)
     // Fail if the gesture goes vertical — keeps Soil dismiss gesture intact.
@@ -96,7 +102,7 @@ export default function DialSlider({ biome }: DialSliderProps) {
       dragStartThumbX.value = thumbX.value;
       // Switching entry modes should never fight the keyboard — hide it the
       // moment the user starts sweeping the dial.
-      runOnJS(Keyboard.dismiss)();
+      runOnJS(dismissKeyboard)();
     })
     .onUpdate((e) => {
       'worklet';
@@ -129,7 +135,7 @@ export default function DialSlider({ biome }: DialSliderProps) {
       runOnJS(setActiveModeIndex)(tappedIdx);
       runOnJS(triggerHaptic)();
       // Tapping a mode tab dismisses the keyboard so it can't obscure the tabs.
-      runOnJS(Keyboard.dismiss)();
+      runOnJS(dismissKeyboard)();
     });
 
   // Race: a quick tap resolves before pan can activate; a drag cancels the tap.

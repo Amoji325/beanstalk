@@ -23,7 +23,7 @@ import Animated, {
 import { CaptureProvider, useCaptureMode } from '@src/context/CaptureContext';
 import { useStalk } from '@src/context/StalkContext';
 import DialSlider from '@src/components/DialSlider';
-import HistoryVine, { EntryInspectSheet, type HistoryVineHandle } from '@src/components/HistoryVine';
+import HistoryVine, { EntryInspectSheet, LadybugToggle, type HistoryVineHandle } from '@src/components/HistoryVine';
 import MemoryModal from '@src/components/MemoryModal';
 import FlashbackModal from '@src/components/FlashbackModal';
 import StalkSwitcher from '@src/components/StalkSwitcher';
@@ -31,6 +31,7 @@ import ScanBeanCapture from '@src/components/capture/ScanBeanCapture';
 import TypeBeanCapture from '@src/components/capture/TypeBeanCapture';
 import VoiceBeanCapture from '@src/components/capture/VoiceBeanCapture';
 import PhotoBeanCapture from '@src/components/capture/PhotoBeanCapture';
+import { setAudioModeAsync } from 'expo-audio';
 import { useAuth } from '@clerk/expo';
 import { insertBean, updateBean, syncLocalBeanToCloud, fetchRandomPastBean } from '@src/database';
 import { LocalAiEngine } from '@src/ai/pipeline';
@@ -137,13 +138,16 @@ interface GardenLayerProps {
   displayBeans: Bean[];
   loading: boolean;
   biome: BiomeConfig;
+  gardenVisible: boolean;
   onFabPress: () => void;
   onPressBean: (bean: Bean) => void;
   isSearchActive: boolean;
   isInspecting: boolean;
   searchQuery: string;
+  favoritesOnly: boolean;
   onSearchToggle: () => void;
   onSearchChange: (q: string) => void;
+  onToggleFavorites: () => void;
   onFlashback: () => void;
   vineRef: React.Ref<HistoryVineHandle>;
 }
@@ -152,27 +156,35 @@ function GardenLayer({
   displayBeans,
   loading,
   biome,
+  gardenVisible,
   onFabPress,
   onPressBean,
   isSearchActive,
   isInspecting,
   searchQuery,
+  favoritesOnly,
   onSearchToggle,
   onSearchChange,
+  onToggleFavorites,
   onFlashback,
   vineRef,
 }: GardenLayerProps) {
   const { palette, nodeSurface } = biome;
-  const showEmpty = isSearchActive && searchQuery.trim().length > 0 && displayBeans.length === 0;
+  const showEmpty =
+    isSearchActive &&
+    (searchQuery.trim().length > 0 || favoritesOnly) &&
+    displayBeans.length === 0;
 
   return (
     <View style={[StyleSheet.absoluteFill, { backgroundColor: palette.backgroundEnd }]}>
       {/* Vine or empty-search state */}
       {showEmpty ? (
         <View style={styles.searchEmpty}>
-          <Text style={styles.searchEmptyEmoji}>🌱</Text>
+          <Text style={styles.searchEmptyEmoji}>{favoritesOnly ? '🐞' : '🌱'}</Text>
           <Text style={[styles.searchEmptyText, { color: palette.textSecondary }]}>
-            No beans match that name!{'\n'}Keep planting!
+            {favoritesOnly
+              ? 'No Ladybugged beans here yet!\nTap a bean’s ladybug to favourite it.'
+              : 'No beans match that name!\nKeep planting!'}
           </Text>
         </View>
       ) : (
@@ -206,21 +218,24 @@ function GardenLayer({
         </Text>
       </TouchableOpacity>
 
-      {/* Flashback (Shake) button — sits just left of the search button */}
-      <TouchableOpacity
-        style={[
-          styles.flashbackBtn,
-          {
-            backgroundColor: nodeSurface,
-            borderColor: palette.accentColor,
-            shadowColor: palette.accentColor,
-          },
-        ]}
-        onPress={onFlashback}
-        activeOpacity={0.82}
-      >
-        <Text style={[styles.searchBtnIcon, { color: palette.textPrimary }]}>✨</Text>
-      </TouchableOpacity>
+      {/* Shake button — bottom-left; resurfaces a random past memory. Hidden
+          while the capture screen is up so it can't block the Soil controls. */}
+      {gardenVisible && (
+        <TouchableOpacity
+          style={[
+            styles.flashbackBtn,
+            {
+              backgroundColor: nodeSurface,
+              borderColor: palette.accentColor,
+              shadowColor: palette.accentColor,
+            },
+          ]}
+          onPress={onFlashback}
+          activeOpacity={0.82}
+        >
+          <Text style={[styles.flashbackLabel, { color: palette.accentColor }]}>Shake</Text>
+        </TouchableOpacity>
+      )}
 
       {/* Search bar — hidden while the inspection sheet is open so it doesn't
           compete for top-of-screen space; query and active state are preserved. */}
@@ -243,6 +258,13 @@ function GardenLayer({
             autoFocus
             returnKeyType="search"
             selectionColor={palette.accentColor}
+          />
+          {/* Ladybug filter — same button as favouriting an entry, for
+              consistency. Shows only favourited ("Ladybugged") beans. */}
+          <LadybugToggle
+            active={favoritesOnly}
+            onToggle={onToggleFavorites}
+            outlineColor={palette.textSecondary}
           />
           {searchQuery.length > 0 && (
             <TouchableOpacity
@@ -280,16 +302,18 @@ function GardenLayer({
 /**
  * Root layout.
  *
- * soilTranslateY == 0              → Soil fully visible (capture mode)
- * soilTranslateY == -SCREEN_HEIGHT → Soil hidden (Garden visible)
+ * soilTranslateY ==  0             → Soil fully visible (capture mode)
+ * soilTranslateY == +SCREEN_HEIGHT → Soil resting below the viewport (Garden visible)
+ * soilTranslateY == -SCREEN_HEIGHT → Soil dismissed above the viewport (Garden visible)
  *
  * Gesture conflict resolution:
  *   Soil/Garden pan → failOffsetX([-20, 20])  (won't activate on horizontal drags)
  *   Dial pan        → failOffsetY([-10, 10])  (won't activate on vertical drags)
  *
- * Vertical navigation (inverted planting gesture):
- *   Swipe UP   → reveal Soil  (capture / plant a bean)
- *   Swipe DOWN → reveal Garden (timeline)
+ * Vertical navigation (the Soil panel tracks the finger 1:1):
+ *   From Garden → swipe UP rises the Soil into view (plant a bean)
+ *   From Soil   → swipe UP slides it up & away; swipe DOWN sinks it back down
+ *   Both dismiss directions reveal the Garden.
  */
 export default function MainContainer() {
   // Clerk-verified user ID — guaranteed non-null here because RootGate only
@@ -309,16 +333,23 @@ export default function MainContainer() {
   // ── Search state ─────────────────────────────────────────────────────────
   const [isSearchActive, setIsSearchActive] = useState(false);
   const [searchQuery, setSearchQuery]       = useState('');
+  const [favoritesOnly, setFavoritesOnly]   = useState(false);
 
   const filteredBeans = useMemo(() => {
-    if (!isSearchActive || !searchQuery.trim()) return beans;
-    const q = searchQuery.toLowerCase();
-    return beans.filter(b => b.title?.toLowerCase().includes(q));
-  }, [beans, isSearchActive, searchQuery]);
+    if (!isSearchActive) return beans;
+    let result = beans;
+    if (favoritesOnly) result = result.filter(b => b.isFavorite);
+    const q = searchQuery.trim().toLowerCase();
+    if (q) result = result.filter(b => b.title?.toLowerCase().includes(q));
+    return result;
+  }, [beans, isSearchActive, searchQuery, favoritesOnly]);
 
   const handleSearchToggle = useCallback(() => {
     setIsSearchActive(prev => {
-      if (prev) setSearchQuery(''); // clear query when closing
+      if (prev) {           // reset filters when closing
+        setSearchQuery('');
+        setFavoritesOnly(false);
+      }
       return !prev;
     });
   }, []);
@@ -357,23 +388,47 @@ export default function MainContainer() {
   // silently degrades to the rule-based fallback if the model is absent.
   useEffect(() => { LocalAiEngine.initializeEngine(); }, []);
 
-  const soilTranslateY = useSharedValue(-SCREEN_HEIGHT);
+  // Configure the global audio session once so voice playback (timeline +
+  // shake-recalled memories) is audible even when the iOS silent switch is on.
+  // Fire-and-forget: a failure here only means playback falls back to the OS
+  // default, never a crash.
+  useEffect(() => {
+    setAudioModeAsync({ playsInSilentMode: true }).catch((e) =>
+      console.warn('[Beanstalk] setAudioModeAsync failed:', e),
+    );
+  }, []);
+
+  // Rests +SCREEN_HEIGHT (below the viewport) so a swipe-up rises it into view.
+  const soilTranslateY = useSharedValue(SCREEN_HEIGHT);
   const dragStartY     = useSharedValue(0);
 
   // ── Snap helpers ─────────────────────────────────────────────────────────
   // Each updates both the spring animation (UI thread) and the gardenVisible
   // JS state (via runOnJS). Safe to invoke from worklet or JS contexts.
 
-  const openGarden = () => {
-    'worklet';
-    soilTranslateY.value = withSpring(-SCREEN_HEIGHT, SPRING_CONFIG);
-    runOnJS(setGardenVisible)(true);
-  };
-
   const openSoil = () => {
     'worklet';
     soilTranslateY.value = withSpring(0, SPRING_CONFIG);
     runOnJS(setGardenVisible)(false);
+  };
+
+  // Sink the Soil back down below the viewport (the resting Garden state).
+  const openGarden = () => {
+    'worklet';
+    soilTranslateY.value = withSpring(SCREEN_HEIGHT, SPRING_CONFIG);
+    runOnJS(setGardenVisible)(true);
+  };
+
+  // Dismiss an *open* Soil by sliding it up and off the top, matching an upward
+  // swipe. Once it settles off-screen we snap it back below the viewport — an
+  // invisible jump, since the Garden fills the screen at both extremes — so the
+  // next swipe-up rises it in from the bottom again.
+  const dismissSoilUpward = () => {
+    'worklet';
+    soilTranslateY.value = withSpring(-SCREEN_HEIGHT, SPRING_CONFIG, (finished) => {
+      if (finished) soilTranslateY.value = SCREEN_HEIGHT;
+    });
+    runOnJS(setGardenVisible)(true);
   };
 
   // ── Capture handler — inserts into DB then refreshes vine ────────────────
@@ -467,8 +522,10 @@ export default function MainContainer() {
   }, []);
 
   // ── Soil ↔ Garden pan gesture ────────────────────────────────────────────
-  // Swipe UP pulls Soil into view (plant); swipe DOWN dismisses to Garden.
-  // Gesture wraps both layers so upward planting works from the timeline too.
+  // The Soil panel tracks the finger 1:1. From the Garden, swiping up rises it
+  // into view. While it's open, swiping up sends it up & off the top, swiping
+  // down sinks it back below — both reveal the Garden. Gesture wraps both layers
+  // so upward planting works from the timeline too.
 
   const soilPanGesture = Gesture.Pan()
     .failOffsetX([-20, 20])
@@ -478,24 +535,32 @@ export default function MainContainer() {
     })
     .onUpdate((e) => {
       'worklet';
-      const next = dragStartY.value - e.translationY;
-      soilTranslateY.value = Math.min(0, Math.max(-SCREEN_HEIGHT, next));
+      // Panel follows the finger: swipe up → moves up, swipe down → moves down.
+      const next = dragStartY.value + e.translationY;
+      soilTranslateY.value = Math.min(SCREEN_HEIGHT, Math.max(-SCREEN_HEIGHT, next));
     })
     .onEnd((e) => {
       'worklet';
-      const flickedUp = e.velocityY < -COMMIT_VELOCITY;
-      const flickedDown = e.velocityY > COMMIT_VELOCITY;
-      const draggedTowardSoil = soilTranslateY.value > dragStartY.value + COMMIT_THRESHOLD;
-      const draggedTowardGarden = soilTranslateY.value < dragStartY.value - COMMIT_THRESHOLD;
+      const p  = soilTranslateY.value;
+      const vy = e.velocityY;
+      // Was the Soil open (near centre) when the drag began?
+      const startedOpen = Math.abs(dragStartY.value) < SCREEN_HEIGHT / 2;
 
-      if (flickedUp || draggedTowardSoil) {
-        openSoil();
-      } else if (flickedDown || draggedTowardGarden) {
-        openGarden();
-      } else if (dragStartY.value < -SCREEN_HEIGHT / 2) {
-        openGarden();
+      if (startedOpen) {
+        if (vy < -COMMIT_VELOCITY || p < -COMMIT_THRESHOLD) {
+          dismissSoilUpward();           // swiped up → slide up and away
+        } else if (vy > COMMIT_VELOCITY || p > COMMIT_THRESHOLD) {
+          openGarden();                  // swiped down → sink back below
+        } else {
+          openSoil();                    // not far enough → snap back open
+        }
       } else {
-        openSoil();
+        // Rising from the Garden: far enough up (or a flick) commits to open.
+        if (vy < -COMMIT_VELOCITY || p < SCREEN_HEIGHT - COMMIT_THRESHOLD) {
+          openSoil();
+        } else {
+          openGarden();
+        }
       }
     });
 
@@ -519,13 +584,16 @@ export default function MainContainer() {
           displayBeans={filteredBeans}
           loading={loading}
           biome={biome}
+          gardenVisible={gardenVisible}
           onFabPress={openSoil}
           onPressBean={setInspectedBean}
           isSearchActive={isSearchActive}
           isInspecting={inspectedBean !== null}
           searchQuery={searchQuery}
+          favoritesOnly={favoritesOnly}
           onSearchToggle={handleSearchToggle}
           onSearchChange={setSearchQuery}
+          onToggleFavorites={() => setFavoritesOnly(v => !v)}
           onFlashback={revealFlashback}
           vineRef={vineRef}
         />
@@ -650,24 +718,29 @@ const styles = StyleSheet.create({
     lineHeight: 18,
   },
 
-  // ── Flashback button ──────────────────────────────────────────────────────
-  // Mirrors the search button, offset one slot to its left (right: 16+38+10).
+  // ── Shake button ────────────────────────────────────────────────────────────
+  // Bottom-left pill, mirroring the FAB's cartoon styling on the opposite corner.
   flashbackBtn: {
     position: 'absolute',
-    top: 52,
-    right: 64,
-    width: 38,
-    height: 38,
-    borderRadius: 19,
+    bottom: 50,
+    left: 24,
+    height: 44,
+    paddingHorizontal: 20,
+    borderRadius: 22,
     borderWidth: 3,
     alignItems: 'center',
     justifyContent: 'center',
     zIndex: 51,
-    // Flat cartoon shadow
-    shadowOffset: { width: 3, height: 3 },
-    shadowOpacity: 0.35,
+    // Flat offset shadow — cartoon depth cue (matches FAB)
+    shadowOffset: { width: 4, height: 4 },
+    shadowOpacity: 0.45,
     shadowRadius: 0,
     elevation: 6,
+  },
+  flashbackLabel: {
+    fontSize: 15,
+    fontWeight: '800',
+    letterSpacing: 0.6,
   },
 
   // ── Search bar ────────────────────────────────────────────────────────────

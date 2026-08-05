@@ -79,12 +79,16 @@ function FlashbackBody({ bean, textColor }: { bean: Bean; textColor: string }) {
         </View>
       );
 
-    case 'scan':
-      return (
+    case 'scan': {
+      const scanUri = bean.scanPageUris?.[0] ?? bean.scanThumbnailUri;
+      return scanUri ? (
+        <Image source={{ uri: scanUri }} style={styles.bodyImage} resizeMode="cover" />
+      ) : (
         <Text style={[styles.bodyText, { color: textColor }]}>
           {bean.scannedText || bean.caption || '(scanned page)'}
         </Text>
       );
+    }
   }
 }
 

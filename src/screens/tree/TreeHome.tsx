@@ -164,7 +164,8 @@ function ShootingStar({ minDelay, maxDelay }: { minDelay: number; maxDelay: numb
 // ─── Tree Home ────────────────────────────────────────────────────────────────
 
 interface TreeHomeProps {
-  onOpenBranch: (stalkId: string) => void;
+  /** Opens a branch; x/y are the tap's page coords so the zoom can pivot there. */
+  onOpenBranch: (stalkId: string, x?: number, y?: number) => void;
   onOpenAccount: () => void;
 }
 
@@ -365,7 +366,7 @@ export default function TreeHome({ onOpenBranch, onOpenAccount }: TreeHomeProps)
             >
               <TouchableOpacity
                 style={[styles.node, { borderColor: accent, backgroundColor: biome.nodeSurface }]}
-                onPress={() => onOpenBranch(stalk.id)}
+                onPress={(e) => onOpenBranch(stalk.id, e.nativeEvent.pageX, e.nativeEvent.pageY)}
                 onLongPress={() => handleLongPress(stalk.id, stalk.name)}
                 delayLongPress={350}
                 activeOpacity={0.85}

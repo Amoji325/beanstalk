@@ -21,8 +21,11 @@ re-navigated so memories are easy to sort and find as they grow.
   - A **horizontal branch timeline** — opening a branch reveals a wood stem with
     memories hanging as leaves that alternate above/below, oldest → newest, and
     it lands on the newest memory.
-- **Phase 2 — next:** an animated *zoom* transition from a tapped branch into its
-  timeline (currently a clean cross-fade).
+- **Phase 2 — shipped:** an animated **zoom** — tapping a branch flies the tree
+  *into* it (pivoting on the exact tap point) while the timeline grows in and the
+  tree fades out; **back** reverses it. The transition math is the tested
+  `zoomTransition.ts`; `RootShell` drives it and mounts both layers only during
+  the animation.
 - **Later:** branch growth animations and a bean → leaf terminology pass.
 
 ## The key mapping: branches ARE stalks
@@ -49,9 +52,10 @@ App → RootGate (Clerk) → StalkProvider → RootShell
                                           └─ AccountMenu (shared overlay)
 ```
 
-- **`src/screens/RootShell.tsx`** — owns `view` ('tree' | 'branch') and the
-  shared account menu. `openBranch(id)` sets the active stalk and switches to the
-  branch view; `backToTree()` returns.
+- **`src/screens/RootShell.tsx`** — owns the tree ⇄ branch **zoom** and the
+  shared account menu. `openBranch(id, x, y)` sets the active stalk, mounts the
+  branch, and animates the zoom (pivoting on the tap point); `backToTree()`
+  reverses it. Only the settled layer is mounted at rest.
 - **`src/screens/tree/TreeHome.tsx`** — draws the trunk + branches, each branch a
   tappable node tinted by its biome, showing its memory count. Long-press a
   branch to delete it. Header: account avatar (left), tree name (center, tap to
@@ -65,6 +69,7 @@ App → RootGate (Clerk) → StalkProvider → RootShell
   - `branchTimelineLayout.ts` — the horizontal timeline (stem baseline, leaves
     alternating up/down at a fixed spacing).
   - `starfield.ts` — a seeded-PRNG starfield for the night sky.
+  - `zoomTransition.ts` — the tree ⇄ branch zoom interpolation (scale + opacity).
   - `treeIdentity.ts` — deriving/resolving/sanitizing the tree name.
 - **`src/components/BranchHeader.tsx`** — the top pill inside a branch that
   returns to the tree (replaces the old stalk dropdown).
@@ -85,13 +90,15 @@ npm test          # run once
 npm run test:watch
 ```
 
-**33 tests across 4 pure engines:**
+**39 tests across 5 pure engines:**
 
 - `branchLayout.test.ts` — tree geometry: count, alternating sides, upward
-  growth, symmetry, height/trunk math, grounded base, determinism.
+  growth, symmetry, height/trunk math, grounded base, constant top headroom,
+  determinism.
 - `branchTimelineLayout.test.ts` — horizontal layout: count, up/down alternation,
   spacing, node offsets, centred stem, content width, determinism.
 - `starfield.test.ts` — seeded determinism, count, in-bounds placement.
+- `zoomTransition.test.ts` — endpoints, clamping, monotonic crossover.
 - `treeIdentity.test.ts` — default/resolve/sanitize name behavior.
 
 Test files are excluded from the app's `tsc` build and run under `jest-expo`.

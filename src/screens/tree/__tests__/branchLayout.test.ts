@@ -52,6 +52,16 @@ describe('computeTreeLayout', () => {
     expect(layout.trunkBottom).toBe(layout.height - 96);
   });
 
+  it('keeps constant top headroom: the topmost branch attaches at y = topPadding for any count', () => {
+    // This is what guarantees tall trees never tuck their top branch under the
+    // header when scrolled fully up.
+    for (const count of [3, 8, 12]) {
+      const layout = computeTreeLayout({ width: W, count, topPadding: 236 });
+      const topmost = Math.min(...layout.branches.map((b) => b.attachY));
+      expect(topmost).toBe(236);
+    }
+  });
+
   it('grounds the trunk: lowest branch sits `baseRise` above the base', () => {
     const layout = computeTreeLayout({ width: W, count: 3, bottomPadding: 96, baseRise: 84 });
     expect(layout.branches[0].attachY).toBe(layout.trunkBottom - 84);

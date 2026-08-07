@@ -13,8 +13,11 @@ re-navigated so memories are easy to sort and find as they grow.
 - **Phase 1 — shipped:** Tree home, tap-to-open a branch, back-to-tree, branch
   create/delete, tree naming, and the Beanstalk → Branch rebrand.
 - **Visual overhaul — shipped:**
-  - A **night-sky Tree home** — deterministic starfield, moon, textured trunk,
-    root flare, and a leafy crown (all drawn with Views; no native deps).
+  - A **night-sky Tree home** — deterministic starfield, occasional **shooting
+    stars**, a moon, a soft **horizon glow** (stacked low-alpha bands, no hard
+    edge), a textured trunk, root flare, and a leafy crown (all drawn with
+    Views; no native deps). The layout reserves fixed top headroom
+    (`topPadding`) so tall trees never tuck their top branch under the header.
   - A **horizontal branch timeline** — opening a branch reveals a wood stem with
     memories hanging as leaves that alternate above/below, oldest → newest, and
     it lands on the newest memory.

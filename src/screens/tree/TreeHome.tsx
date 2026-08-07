@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   Alert,
   Dimensions,
@@ -13,7 +13,18 @@ import {
   TouchableOpacity,
   View,
 } from 'react-native';
-import Animated, { FadeIn, FadeInDown, FadeOut, ZoomIn, ZoomOut } from 'react-native-reanimated';
+import Animated, {
+  Easing,
+  FadeIn,
+  FadeInDown,
+  FadeOut,
+  ZoomIn,
+  ZoomOut,
+  runOnJS,
+  useAnimatedStyle,
+  useSharedValue,
+  withTiming,
+} from 'react-native-reanimated';
 import { useUser } from '@clerk/expo';
 import { useStalk } from '@src/context/StalkContext';
 import { getBiome } from '@src/constants';
@@ -30,7 +41,15 @@ const { width: SCREEN_WIDTH, height: SCREEN_HEIGHT } = Dimensions.get('window');
 // ─── Palette ──────────────────────────────────────────────────────────────────
 
 const NIGHT = '#0a1224';          // deep indigo sky
-const HORIZON = 'rgba(28,74,86,0.55)'; // teal mist band near the base
+// Bottom horizon glow — many low-alpha bands stacked from the base up create a
+// smooth teal fade (no hard-edged "box") without a native gradient dependency.
+const HORIZON_STEP = 'rgba(30,78,90,0.06)';
+const HORIZON_STEPS = 13;
+const HORIZON_HEIGHT = SCREEN_HEIGHT * 0.5;
+// Headroom above the top branch so it always clears the header controls, even
+// when the tree is tall and scrolled fully up. (Topmost branch attaches at y =
+// topPadding; see computeTreeLayout.)
+const TOP_CLEARANCE = 236;
 const WOOD = '#5a3d24';
 const WOOD_LIGHT = '#734e2f';
 const WOOD_DARK = '#402917';
@@ -84,6 +103,64 @@ function Leaf({ color, size }: { color: string; size: number }) {
   );
 }
 
+// ─── Shooting star ────────────────────────────────────────────────────────────
+// A streak that fires across the sky at random intervals, then reschedules
+// itself. Purely decorative; lives in the fixed sky layer behind the tree.
+
+function ShootingStar({ minDelay, maxDelay }: { minDelay: number; maxDelay: number }) {
+  const p = useSharedValue(0);
+  const sx = useSharedValue(0);
+  const sy = useSharedValue(0);
+  const dx = useSharedValue(0);
+  const dy = useSharedValue(0);
+  const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const mounted = useRef(true);
+
+  const scheduleNext = useCallback(() => {
+    if (!mounted.current) return;
+    const wait = minDelay + Math.random() * (maxDelay - minDelay);
+    timer.current = setTimeout(() => {
+      if (!mounted.current) return;
+      const dir = Math.random() < 0.5 ? 1 : -1;
+      const dist = 180 + Math.random() * 150;
+      sx.value = Math.random() * SCREEN_WIDTH;
+      sy.value = 40 + Math.random() * (SCREEN_HEIGHT * 0.26);
+      dx.value = dir * dist * 0.85;
+      dy.value = dist * 0.5;
+      p.value = 0;
+      p.value = withTiming(1, { duration: 640, easing: Easing.out(Easing.quad) }, (finished) => {
+        if (finished) runOnJS(scheduleNext)();
+      });
+    }, wait);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [minDelay, maxDelay]);
+
+  useEffect(() => {
+    mounted.current = true;
+    scheduleNext();
+    return () => {
+      mounted.current = false;
+      if (timer.current) clearTimeout(timer.current);
+    };
+  }, [scheduleNext]);
+
+  const style = useAnimatedStyle(() => ({
+    opacity: Math.sin(p.value * Math.PI) * 0.9,
+    transform: [
+      { translateX: sx.value + dx.value * p.value },
+      { translateY: sy.value + dy.value * p.value },
+      { rotate: `${Math.atan2(dy.value, dx.value)}rad` },
+    ],
+  }));
+
+  return (
+    <Animated.View pointerEvents="none" style={[styles.shootingStar, style]}>
+      <View style={styles.shootingTail} />
+      <View style={styles.shootingHead} />
+    </Animated.View>
+  );
+}
+
 // ─── Tree Home ────────────────────────────────────────────────────────────────
 
 interface TreeHomeProps {
@@ -111,7 +188,7 @@ export default function TreeHome({ onOpenBranch, onOpenAccount }: TreeHomeProps)
   }, [stalks.length]);
 
   const layout = useMemo(
-    () => computeTreeLayout({ width: SCREEN_WIDTH, count: stalks.length }),
+    () => computeTreeLayout({ width: SCREEN_WIDTH, count: stalks.length, topPadding: TOP_CLEARANCE }),
     [stalks.length],
   );
 
@@ -161,7 +238,21 @@ export default function TreeHome({ onOpenBranch, onOpenAccount }: TreeHomeProps)
   return (
     <View style={styles.root}>
       {/* ── Fixed night sky backdrop ─────────────────────────────────────────── */}
-      <View style={styles.horizon} pointerEvents="none" />
+      {/* Soft horizon glow — stacked low-alpha bands = a smooth fade, no hard box */}
+      {Array.from({ length: HORIZON_STEPS }).map((_, j) => (
+        <View
+          key={`horizon-${j}`}
+          pointerEvents="none"
+          style={{
+            position: 'absolute',
+            left: 0,
+            right: 0,
+            bottom: 0,
+            height: (HORIZON_HEIGHT * (j + 1)) / HORIZON_STEPS,
+            backgroundColor: HORIZON_STEP,
+          }}
+        />
+      ))}
       {STARS.map((s, i) => (
         <View
           key={`star-${i}`}
@@ -181,6 +272,10 @@ export default function TreeHome({ onOpenBranch, onOpenAccount }: TreeHomeProps)
       {/* Moon */}
       <View style={styles.moonGlow} pointerEvents="none" />
       <View style={styles.moon} pointerEvents="none" />
+
+      {/* Shooting stars — two, offset so they never fire in sync */}
+      <ShootingStar minDelay={2600} maxDelay={7000} />
+      <ShootingStar minDelay={6000} maxDelay={12000} />
 
       {/* ── Scrolling tree ───────────────────────────────────────────────────── */}
       <ScrollView contentContainerStyle={{ height: contentHeight }} showsVerticalScrollIndicator={false}>
@@ -353,13 +448,28 @@ export default function TreeHome({ onOpenBranch, onOpenAccount }: TreeHomeProps)
 const styles = StyleSheet.create({
   root: { flex: 1, backgroundColor: NIGHT },
 
-  horizon: {
+  shootingStar: {
     position: 'absolute',
+    top: 0,
     left: 0,
-    right: 0,
-    bottom: 0,
-    height: SCREEN_HEIGHT * 0.34,
-    backgroundColor: HORIZON,
+    flexDirection: 'row',
+    alignItems: 'center',
+  },
+  shootingTail: {
+    width: 54,
+    height: 2,
+    borderRadius: 1,
+    backgroundColor: 'rgba(255,255,255,0.65)',
+  },
+  shootingHead: {
+    width: 5,
+    height: 5,
+    borderRadius: 2.5,
+    backgroundColor: '#fff',
+    marginLeft: 1,
+    shadowColor: '#fff',
+    shadowOpacity: 0.9,
+    shadowRadius: 4,
   },
   moonGlow: {
     position: 'absolute',

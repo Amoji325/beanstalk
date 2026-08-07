@@ -23,7 +23,8 @@ import Animated, {
 import { CaptureProvider, useCaptureMode } from '@src/context/CaptureContext';
 import { useStalk } from '@src/context/StalkContext';
 import DialSlider from '@src/components/DialSlider';
-import HistoryVine, { EntryInspectSheet, LadybugToggle, LadybugIcon, type HistoryVineHandle } from '@src/components/HistoryVine';
+import { EntryInspectSheet, LadybugToggle, LadybugIcon } from '@src/components/HistoryVine';
+import BranchTimeline, { type BranchTimelineHandle } from '@src/components/BranchTimeline';
 import MemoryModal from '@src/components/MemoryModal';
 import FlashbackModal from '@src/components/FlashbackModal';
 import BranchHeader from '@src/components/BranchHeader';
@@ -220,7 +221,7 @@ interface GardenLayerProps {
   onSearchChange: (q: string) => void;
   onToggleFavorites: () => void;
   onFlashback: () => void;
-  vineRef: React.Ref<HistoryVineHandle>;
+  vineRef: React.Ref<BranchTimelineHandle>;
 }
 
 function GardenLayer({
@@ -268,7 +269,7 @@ function GardenLayer({
           </Text>
         </View>
       ) : (
-        <HistoryVine
+        <BranchTimeline
           ref={vineRef}
           beans={displayBeans}
           loading={loading}
@@ -481,7 +482,7 @@ export default function MainContainer({ onBackToTree, onOpenAccount }: MainConta
   // ── Spontaneous Flashback (header-button) ──────────────────────────────────
   // A random *past* memory pulled on demand and dropped in with a falling
   // animation. Independent of the accelerometer shake path above.
-  const vineRef = useRef<HistoryVineHandle>(null);
+  const vineRef = useRef<BranchTimelineHandle>(null);
   const [flashbackBean, setFlashbackBean] = useState<Bean | null>(null);
   const flashbackBusyRef = useRef(false);
 

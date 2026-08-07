@@ -21,39 +21,66 @@ import { fetchBeanCountsByStalk } from '@src/database';
 import CreateBranchForm from '@src/components/CreateBranchForm';
 import { AccountAvatarGlyph, accountInitial, avatarKind } from '@src/components/AccountMenu';
 import { computeTreeLayout } from './branchLayout';
+import { makeStars } from './starfield';
 import { resolveTreeName, sanitizeTreeName, TREE_NAME_MAX } from './treeIdentity';
 import type { BiomeTheme } from '@src/types';
 
 const { width: SCREEN_WIDTH, height: SCREEN_HEIGHT } = Dimensions.get('window');
 
-// The tree canvas uses a single calm base theme; each branch is tinted by its
-// own biome so the crown reads as one tree with many coloured limbs.
-const TREE = getBiome('standard');
-const WOOD = '#6b4a2e';
-const WOOD_DARK = '#553a24';
+// ─── Palette ──────────────────────────────────────────────────────────────────
 
-const NODE_W = 156;
-const NODE_H = 58;
-const TRUNK_W = 16;
+const NIGHT = '#0a1224';          // deep indigo sky
+const HORIZON = 'rgba(28,74,86,0.55)'; // teal mist band near the base
+const WOOD = '#5a3d24';
+const WOOD_LIGHT = '#734e2f';
+const WOOD_DARK = '#402917';
+const CROWN_GREENS = ['rgba(30,90,42,0.9)', 'rgba(46,125,50,0.85)', 'rgba(67,160,71,0.8)'];
+const TEXT = '#e8f0e6';
+const TEXT_DIM = '#8fa8a0';
+const ACCENT = '#7fc98a';
+
+const TRUNK_W = 30;
+const NODE_W = 158;
+const NODE_H = 60;
+
+// Stable starfield (module-level so it never re-randomises on re-render).
+const STARS = makeStars({ width: SCREEN_WIDTH, height: SCREEN_HEIGHT, count: 90, seed: 42 });
+
+// Crown foliage: overlapping soft circles relative to the trunk top.
+const CROWN = [
+  { dx: 0, dy: -18, r: 96, ci: 0 },
+  { dx: -74, dy: 22, r: 72, ci: 1 },
+  { dx: 74, dy: 22, r: 72, ci: 1 },
+  { dx: -40, dy: -46, r: 66, ci: 2 },
+  { dx: 44, dy: -44, r: 66, ci: 2 },
+  { dx: 0, dy: 40, r: 80, ci: 1 },
+];
+
+// Root flare at the base: angled roots spreading down and out.
+const ROOTS = [
+  { rot: -58, len: 76 },
+  { rot: -30, len: 92 },
+  { rot: 0, len: 70 },
+  { rot: 30, len: 92 },
+  { rot: 58, len: 76 },
+];
 
 // ─── Small leaf mark ──────────────────────────────────────────────────────────
 
 function Leaf({ color, size }: { color: string; size: number }) {
-  const d = Math.round(size * 0.7);
+  const d = Math.round(size * 0.72);
   return (
-    <View style={{ width: size, height: size, alignItems: 'center', justifyContent: 'center' }}>
-      <View
-        style={{
-          width: d,
-          height: d,
-          backgroundColor: color,
-          borderTopLeftRadius: d,
-          borderBottomRightRadius: d,
-          borderTopRightRadius: Math.round(d * 0.12),
-          borderBottomLeftRadius: Math.round(d * 0.12),
-        }}
-      />
-    </View>
+    <View
+      style={{
+        width: d,
+        height: d,
+        backgroundColor: color,
+        borderTopLeftRadius: d,
+        borderBottomRightRadius: d,
+        borderTopRightRadius: Math.round(d * 0.12),
+        borderBottomLeftRadius: Math.round(d * 0.12),
+      }}
+    />
   );
 }
 
@@ -75,8 +102,6 @@ export default function TreeHome({ onOpenBranch, onOpenAccount }: TreeHomeProps)
 
   const treeName = resolveTreeName(user);
 
-  // Refresh per-branch memory counts whenever the screen mounts (i.e. every time
-  // we return to the tree from a branch).
   useEffect(() => {
     let cancelled = false;
     fetchBeanCountsByStalk()
@@ -90,10 +115,11 @@ export default function TreeHome({ onOpenBranch, onOpenAccount }: TreeHomeProps)
     [stalks.length],
   );
 
-  // Centre the tree vertically when it's shorter than the screen; taller trees
-  // scroll. offsetY shifts every element down so a small tree isn't stuck at top.
   const contentHeight = Math.max(layout.height, SCREEN_HEIGHT);
   const offsetY = Math.round((contentHeight - layout.height) / 2);
+  const crownX = layout.trunkX;
+  const crownY = layout.trunkTop + offsetY;
+  const baseY = layout.trunkBottom + offsetY;
 
   const handleCreate = useCallback(
     async (name: string, theme: BiomeTheme) => {
@@ -134,50 +160,97 @@ export default function TreeHome({ onOpenBranch, onOpenAccount }: TreeHomeProps)
 
   return (
     <View style={styles.root}>
-      <ScrollView
-        contentContainerStyle={{ height: contentHeight }}
-        showsVerticalScrollIndicator={false}
-      >
-        {/* Crown — soft foliage silhouette behind the trunk top */}
+      {/* ── Fixed night sky backdrop ─────────────────────────────────────────── */}
+      <View style={styles.horizon} pointerEvents="none" />
+      {STARS.map((s, i) => (
         <View
-          style={[
-            styles.crown,
-            {
-              left: layout.trunkX - 150,
-              top: layout.trunkTop - 150 + offsetY,
-            },
-          ]}
+          key={`star-${i}`}
+          pointerEvents="none"
+          style={{
+            position: 'absolute',
+            left: s.x,
+            top: s.y,
+            width: s.r * 2,
+            height: s.r * 2,
+            borderRadius: s.r,
+            backgroundColor: '#fff',
+            opacity: s.opacity,
+          }}
         />
+      ))}
+      {/* Moon */}
+      <View style={styles.moonGlow} pointerEvents="none" />
+      <View style={styles.moon} pointerEvents="none" />
 
-        {/* Trunk */}
+      {/* ── Scrolling tree ───────────────────────────────────────────────────── */}
+      <ScrollView contentContainerStyle={{ height: contentHeight }} showsVerticalScrollIndicator={false}>
+        {/* Crown foliage */}
+        {CROWN.map((c, i) => (
+          <View
+            key={`crown-${i}`}
+            style={{
+              position: 'absolute',
+              left: crownX + c.dx - c.r,
+              top: crownY + c.dy - c.r,
+              width: c.r * 2,
+              height: c.r * 2,
+              borderRadius: c.r,
+              backgroundColor: CROWN_GREENS[c.ci],
+            }}
+          />
+        ))}
+
+        {/* Trunk (with bark shading) */}
         <View
           style={[
             styles.trunk,
-            {
-              left: layout.trunkX - TRUNK_W / 2,
-              top: layout.trunkTop + offsetY,
-              height: Math.max(0, layout.trunkBottom - layout.trunkTop),
-            },
+            { left: layout.trunkX - TRUNK_W / 2, top: layout.trunkTop + offsetY, height: Math.max(0, layout.trunkBottom - layout.trunkTop) },
           ]}
         />
-        {/* Roots flare at the base */}
-        <View style={[styles.rootFlare, { left: layout.trunkX - 40, top: layout.trunkBottom - 10 + offsetY }]} />
+        <View
+          style={[
+            styles.trunkHighlight,
+            { left: layout.trunkX - TRUNK_W / 2 + 4, top: layout.trunkTop + offsetY, height: Math.max(0, layout.trunkBottom - layout.trunkTop) },
+          ]}
+        />
 
-        {/* Branch arms (decorative) */}
-        {layout.branches.map((b) => (
+        {/* Root flare */}
+        {ROOTS.map((r, i) => (
           <View
-            key={`arm-${b.index}`}
+            key={`root-${i}`}
             style={{
               position: 'absolute',
-              left: b.midX - b.length / 2,
-              top: b.midY - 5 + offsetY,
-              width: b.length,
-              height: 10,
-              borderRadius: 5,
-              backgroundColor: WOOD,
-              transform: [{ rotate: `${b.rotationDeg}deg` }],
+              left: layout.trunkX - 6,
+              top: baseY - 8,
+              width: 12,
+              height: r.len,
+              borderRadius: 6,
+              backgroundColor: WOOD_DARK,
+              transform: [{ translateY: r.len / 2 }, { rotate: `${r.rot}deg` }, { translateY: -r.len / 2 }],
             }}
           />
+        ))}
+        <View style={[styles.trunkBase, { left: layout.trunkX - 26, top: baseY - 18 }]} />
+
+        {/* Branch arms + a couple of leaves each */}
+        {layout.branches.map((b) => (
+          <React.Fragment key={`arm-${b.index}`}>
+            <View
+              style={{
+                position: 'absolute',
+                left: b.midX - b.length / 2,
+                top: b.midY - 5 + offsetY,
+                width: b.length,
+                height: 11,
+                borderRadius: 6,
+                backgroundColor: WOOD,
+                transform: [{ rotate: `${b.rotationDeg}deg` }],
+              }}
+            />
+            <View style={{ position: 'absolute', left: (b.attachX + b.tipX) / 2 - 6, top: (b.attachY + b.tipY) / 2 - 16 + offsetY }}>
+              <Leaf color={CROWN_GREENS[1]} size={14} />
+            </View>
+          </React.Fragment>
         ))}
 
         {/* Branch nodes (tappable) */}
@@ -220,44 +293,28 @@ export default function TreeHome({ onOpenBranch, onOpenAccount }: TreeHomeProps)
       </ScrollView>
 
       {/* ── Header overlay ─────────────────────────────────────────────────── */}
-      {/* Account avatar (top-left) */}
       <TouchableOpacity
-        style={[styles.accountBtn, { backgroundColor: TREE.nodeSurface, borderColor: TREE.palette.accentColor }]}
+        style={[styles.accountBtn, { borderColor: ACCENT }]}
         onPress={onOpenAccount}
         activeOpacity={0.82}
       >
-        <AccountAvatarGlyph kind={kind} initial={initial} color={TREE.palette.accentColor} bg={TREE.nodeSurface} size={22} />
+        <AccountAvatarGlyph kind={kind} initial={initial} color={ACCENT} bg="#0e1a2c" size={22} />
       </TouchableOpacity>
 
-      {/* Tree name (center, tap to rename) */}
       <View style={styles.titleWrap} pointerEvents="box-none">
-        <TouchableOpacity
-          onPress={() => { setNameDraft(treeName); setRenaming(true); }}
-          activeOpacity={0.7}
-          hitSlop={10}
-        >
-          <Text style={[styles.title, { color: TREE.palette.textPrimary }]} numberOfLines={1}>
-            {treeName}
-          </Text>
-          <Text style={[styles.titleHint, { color: `${TREE.palette.textSecondary}cc` }]}>your tree · tap to rename</Text>
+        <TouchableOpacity onPress={() => { setNameDraft(treeName); setRenaming(true); }} activeOpacity={0.7} hitSlop={10}>
+          <Text style={styles.title} numberOfLines={1}>{treeName}</Text>
+          <Text style={styles.titleHint}>your tree · tap to rename</Text>
         </TouchableOpacity>
       </View>
 
-      {/* New branch (top-right) */}
-      <TouchableOpacity
-        style={[styles.newBtn, { backgroundColor: TREE.nodeSurface, borderColor: TREE.palette.accentColor }]}
-        onPress={() => setCreating(true)}
-        activeOpacity={0.82}
-      >
-        <Text style={[styles.newBtnPlus, { color: TREE.palette.accentColor }]}>+</Text>
+      <TouchableOpacity style={[styles.newBtn, { borderColor: ACCENT }]} onPress={() => setCreating(true)} activeOpacity={0.82}>
+        <Text style={[styles.newBtnPlus, { color: ACCENT }]}>+</Text>
       </TouchableOpacity>
 
-      {/* Hint if the tree is nearly bare */}
       {stalks.length <= 1 && (
         <Animated.View entering={FadeIn.delay(300)} style={styles.emptyHint} pointerEvents="none">
-          <Text style={[styles.emptyHintText, { color: `${TREE.palette.textSecondary}` }]}>
-            Tap a branch to open it, or grow a new one with +
-          </Text>
+          <Text style={styles.emptyHintText}>Tap a branch to open it, or grow a new one with +</Text>
         </Animated.View>
       )}
 
@@ -268,11 +325,7 @@ export default function TreeHome({ onOpenBranch, onOpenAccount }: TreeHomeProps)
         <Animated.View entering={FadeIn.duration(160)} exiting={FadeOut.duration(140)} style={styles.renameBackdrop}>
           <Pressable style={StyleSheet.absoluteFill} onPress={() => setRenaming(false)} />
           <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : 'height'} style={styles.renameKav}>
-            <Animated.View
-              entering={ZoomIn.springify().damping(24).stiffness(340).mass(0.5)}
-              exiting={ZoomOut.duration(130)}
-              style={styles.renameCard}
-            >
+            <Animated.View entering={ZoomIn.springify().damping(24).stiffness(340).mass(0.5)} exiting={ZoomOut.duration(130)} style={styles.renameCard}>
               <Text style={styles.renameTitle}>Name your tree</Text>
               <TextInput
                 style={styles.renameInput}
@@ -284,9 +337,9 @@ export default function TreeHome({ onOpenBranch, onOpenAccount }: TreeHomeProps)
                 autoFocus
                 returnKeyType="done"
                 onSubmitEditing={saveTreeName}
-                selectionColor={TREE.palette.accentColor}
+                selectionColor={ACCENT}
               />
-              <TouchableOpacity style={[styles.renameSave, { backgroundColor: TREE.palette.accentColor }]} onPress={saveTreeName} activeOpacity={0.85}>
+              <TouchableOpacity style={[styles.renameSave, { backgroundColor: ACCENT }]} onPress={saveTreeName} activeOpacity={0.85}>
                 <Text style={styles.renameSaveLabel}>Save</Text>
               </TouchableOpacity>
             </Animated.View>
@@ -298,29 +351,38 @@ export default function TreeHome({ onOpenBranch, onOpenAccount }: TreeHomeProps)
 }
 
 const styles = StyleSheet.create({
-  root: { flex: 1, backgroundColor: TREE.palette.backgroundEnd },
+  root: { flex: 1, backgroundColor: NIGHT },
 
-  crown: {
+  horizon: {
     position: 'absolute',
-    width: 300,
-    height: 300,
-    borderRadius: 150,
-    backgroundColor: 'rgba(30,107,46,0.16)',
+    left: 0,
+    right: 0,
+    bottom: 0,
+    height: SCREEN_HEIGHT * 0.34,
+    backgroundColor: HORIZON,
   },
-  trunk: {
+  moonGlow: {
     position: 'absolute',
-    width: TRUNK_W,
-    borderRadius: TRUNK_W / 2,
-    backgroundColor: WOOD,
+    top: 74,
+    right: 34,
+    width: 108,
+    height: 108,
+    borderRadius: 54,
+    backgroundColor: 'rgba(220,235,255,0.12)',
   },
-  rootFlare: {
+  moon: {
     position: 'absolute',
-    width: 80,
-    height: 20,
-    borderBottomLeftRadius: 40,
-    borderBottomRightRadius: 40,
-    backgroundColor: WOOD_DARK,
+    top: 92,
+    right: 52,
+    width: 62,
+    height: 62,
+    borderRadius: 31,
+    backgroundColor: '#e8eefc',
   },
+
+  trunk: { position: 'absolute', width: TRUNK_W, borderRadius: TRUNK_W / 2, backgroundColor: WOOD },
+  trunkHighlight: { position: 'absolute', width: 7, borderRadius: 4, backgroundColor: WOOD_LIGHT, opacity: 0.7 },
+  trunkBase: { position: 'absolute', width: 52, height: 30, borderTopLeftRadius: 20, borderTopRightRadius: 20, backgroundColor: WOOD },
 
   node: {
     width: NODE_W,
@@ -333,7 +395,7 @@ const styles = StyleSheet.create({
     gap: 10,
     shadowColor: '#000',
     shadowOffset: { width: 2, height: 3 },
-    shadowOpacity: 0.35,
+    shadowOpacity: 0.4,
     shadowRadius: 0,
     elevation: 6,
   },
@@ -342,7 +404,6 @@ const styles = StyleSheet.create({
   nodeName: { fontSize: 15, fontWeight: '700' },
   nodeCount: { fontSize: 12, fontWeight: '500', marginTop: 1 },
 
-  // ── Header ──────────────────────────────────────────────────────────────────
   accountBtn: {
     position: 'absolute',
     top: 52,
@@ -353,15 +414,11 @@ const styles = StyleSheet.create({
     borderWidth: 3,
     alignItems: 'center',
     justifyContent: 'center',
-    shadowColor: '#000',
-    shadowOffset: { width: 3, height: 3 },
-    shadowOpacity: 0.35,
-    shadowRadius: 0,
-    elevation: 6,
+    backgroundColor: '#0e1a2c',
   },
   titleWrap: { position: 'absolute', top: 52, left: 62, right: 62, alignItems: 'center' },
-  title: { fontSize: 20, fontWeight: '800', letterSpacing: 0.2, textAlign: 'center' },
-  titleHint: { fontSize: 11, textAlign: 'center', marginTop: 2 },
+  title: { fontSize: 21, fontWeight: '800', letterSpacing: 0.2, textAlign: 'center', color: TEXT },
+  titleHint: { fontSize: 11, textAlign: 'center', marginTop: 2, color: TEXT_DIM },
   newBtn: {
     position: 'absolute',
     top: 52,
@@ -372,18 +429,13 @@ const styles = StyleSheet.create({
     borderWidth: 3,
     alignItems: 'center',
     justifyContent: 'center',
-    shadowColor: '#000',
-    shadowOffset: { width: 3, height: 3 },
-    shadowOpacity: 0.35,
-    shadowRadius: 0,
-    elevation: 6,
+    backgroundColor: '#0e1a2c',
   },
   newBtnPlus: { fontSize: 24, fontWeight: '400', lineHeight: 28 },
 
-  emptyHint: { position: 'absolute', bottom: 40, left: 40, right: 40, alignItems: 'center' },
-  emptyHintText: { fontSize: 14, textAlign: 'center', lineHeight: 20 },
+  emptyHint: { position: 'absolute', bottom: 44, left: 40, right: 40, alignItems: 'center' },
+  emptyHintText: { fontSize: 14, textAlign: 'center', lineHeight: 20, color: TEXT_DIM },
 
-  // ── Rename modal ──────────────────────────────────────────────────────────────
   renameBackdrop: { flex: 1, backgroundColor: 'rgba(0,0,0,0.68)' },
   renameKav: { flex: 1, justifyContent: 'center', alignItems: 'center', paddingHorizontal: 28 },
   renameCard: {
@@ -392,7 +444,7 @@ const styles = StyleSheet.create({
     backgroundColor: '#111a12',
     borderRadius: 20,
     borderWidth: 1,
-    borderColor: 'rgba(86,196,100,0.25)',
+    borderColor: 'rgba(127,201,138,0.3)',
     padding: 20,
     gap: 14,
   },
@@ -401,12 +453,12 @@ const styles = StyleSheet.create({
     backgroundColor: 'rgba(255,255,255,0.06)',
     borderRadius: 12,
     borderWidth: 1,
-    borderColor: 'rgba(86,196,100,0.2)',
+    borderColor: 'rgba(127,201,138,0.25)',
     paddingHorizontal: 16,
     paddingVertical: 13,
     fontSize: 16,
     color: '#d4edda',
   },
   renameSave: { paddingVertical: 13, borderRadius: 12, alignItems: 'center' },
-  renameSaveLabel: { color: '#fff', fontSize: 15, fontWeight: '700' },
+  renameSaveLabel: { color: '#08240f', fontSize: 15, fontWeight: '800' },
 });

@@ -99,7 +99,7 @@ function podRadius(side: 'left' | 'right'): PodRadius {
 }
 
 /** Flat colour bundle derived once per biome and threaded into every row. */
-interface VineColors {
+export interface VineColors {
   canvas: string;
   trunk: string;
   knot: string;
@@ -120,7 +120,7 @@ interface VineColors {
   cardShadow: string;
 }
 
-function makeColors(biome: BiomeConfig): VineColors {
+export function makeColors(biome: BiomeConfig): VineColors {
   const { palette, nodeSurface, visuals } = biome;
   const lightSurface = isLightColor(nodeSurface);
   return {
@@ -157,19 +157,19 @@ function glowStyle(color: string, on: boolean): ViewStyle {
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
-function truncate(text: string | undefined, len: number): string {
+export function truncate(text: string | undefined, len: number): string {
   if (!text) return '';
   return text.length > len ? `${text.slice(0, len).trimEnd()}…` : text;
 }
 
-function fmtDuration(seconds: number | undefined): string {
+export function fmtDuration(seconds: number | undefined): string {
   if (!seconds) return '--:--';
   const m = Math.floor(seconds / 60);
   const s = seconds % 60;
   return `${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}`;
 }
 
-function fmtDate(ts: number): string {
+export function fmtDate(ts: number): string {
   return new Date(ts).toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
 }
 

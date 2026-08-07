@@ -10,13 +10,17 @@ re-navigated so memories are easy to sort and find as they grow.
 
 ## Phase status
 
-- **Phase 1 (this branch) — shipped:** the Tree home screen, tap-to-open a
-  branch, back-to-tree, branch create/delete, tree naming, and the Beanstalk →
-  Branch rebrand. Backed by a tested layout engine.
-- **Phase 2 — next:** an animated *zoom* transition from the tapped branch into
-  its timeline (currently a clean cross-fade).
-- **Phase 3 — later:** horizontal timeline reorientation, branch growth
-  animations, and broader UI/UX polish.
+- **Phase 1 — shipped:** Tree home, tap-to-open a branch, back-to-tree, branch
+  create/delete, tree naming, and the Beanstalk → Branch rebrand.
+- **Visual overhaul — shipped:**
+  - A **night-sky Tree home** — deterministic starfield, moon, textured trunk,
+    root flare, and a leafy crown (all drawn with Views; no native deps).
+  - A **horizontal branch timeline** — opening a branch reveals a wood stem with
+    memories hanging as leaves that alternate above/below, oldest → newest, and
+    it lands on the newest memory.
+- **Phase 2 — next:** an animated *zoom* transition from a tapped branch into its
+  timeline (currently a clean cross-fade).
+- **Later:** branch growth animations and a bean → leaf terminology pass.
 
 ## The key mapping: branches ARE stalks
 
@@ -49,11 +53,16 @@ App → RootGate (Clerk) → StalkProvider → RootShell
   tappable node tinted by its biome, showing its memory count. Long-press a
   branch to delete it. Header: account avatar (left), tree name (center, tap to
   rename), and **+** to grow a new branch.
-- **`src/screens/tree/branchLayout.ts`** — the **pure, deterministic** layout
-  engine. `computeTreeLayout({ width, count, … })` returns trunk bounds and each
-  branch's attach/tip/mid points + rotation. Fully unit-tested; no React.
-- **`src/screens/tree/treeIdentity.ts`** — pure helpers for deriving,
-  resolving, and sanitizing the tree name. Unit-tested.
+- **`src/components/BranchTimeline.tsx`** — the **horizontal** branch timeline
+  that renders inside a branch (a drop-in for the old vertical `HistoryVine`,
+  same props + `scrollToBean` handle). Reuses `HistoryVine`'s exported colour +
+  format helpers for consistent theming.
+- **Pure, deterministic, unit-tested engines** in `src/screens/tree/`:
+  - `branchLayout.ts` — the Tree home geometry (trunk + branches, grounded base).
+  - `branchTimelineLayout.ts` — the horizontal timeline (stem baseline, leaves
+    alternating up/down at a fixed spacing).
+  - `starfield.ts` — a seeded-PRNG starfield for the night sky.
+  - `treeIdentity.ts` — deriving/resolving/sanitizing the tree name.
 - **`src/components/BranchHeader.tsx`** — the top pill inside a branch that
   returns to the tree (replaces the old stalk dropdown).
 - **`src/components/CreateBranchForm.tsx`** — the "grow a branch" modal
@@ -73,9 +82,13 @@ npm test          # run once
 npm run test:watch
 ```
 
-- `branchLayout.test.ts` — 12 cases: branch count, alternating sides, upward
-  growth, left/right symmetry, height/trunk math, the grounded base, and
-  determinism.
+**33 tests across 4 pure engines:**
+
+- `branchLayout.test.ts` — tree geometry: count, alternating sides, upward
+  growth, symmetry, height/trunk math, grounded base, determinism.
+- `branchTimelineLayout.test.ts` — horizontal layout: count, up/down alternation,
+  spacing, node offsets, centred stem, content width, determinism.
+- `starfield.test.ts` — seeded determinism, count, in-bounds placement.
 - `treeIdentity.test.ts` — default/resolve/sanitize name behavior.
 
 Test files are excluded from the app's `tsc` build and run under `jest-expo`.

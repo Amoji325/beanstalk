@@ -79,9 +79,9 @@ export default function SignInScreen({ onSwitchToSignUp }: SignInScreenProps) {
 
         {/* ── Logo ─────────────────────────────────────────────────────────── */}
         <View style={styles.logoArea}>
-          <Text style={styles.logoEmoji}>🌱</Text>
-          <Text style={styles.logoTitle}>Beanstalk</Text>
-          <Text style={styles.logoSub}>Your living journal</Text>
+          <Text style={styles.logoEmoji}>🌳</Text>
+          <Text style={styles.logoTitle}>Branch</Text>
+          <Text style={styles.logoSub}>Your memories, growing</Text>
         </View>
 
         {/* ── Card ─────────────────────────────────────────────────────────── */}

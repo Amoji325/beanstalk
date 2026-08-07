@@ -465,6 +465,21 @@ export async function fetchBeansForStalk(stalkId: string): Promise<Bean[]> {
 }
 
 /**
+ * Returns a map of stalkId → memory (bean) count, for every stalk. Powers the
+ * Branch home screen, where each branch shows how many memories it holds.
+ * Stalks with zero beans are omitted from the map (callers default to 0).
+ */
+export async function fetchBeanCountsByStalk(): Promise<Record<string, number>> {
+  const db = await getDb();
+  const rows = await db.getAllAsync<{ stalkId: string; n: number }>(
+    'SELECT stalkId, COUNT(*) AS n FROM beans GROUP BY stalkId'
+  );
+  const counts: Record<string, number> = {};
+  for (const row of rows) counts[row.stalkId] = row.n;
+  return counts;
+}
+
+/**
  * Inserts a new bean, auto-generates its id, and returns the persisted Bean.
  * Throws if the referenced stalkId does not exist.
  */

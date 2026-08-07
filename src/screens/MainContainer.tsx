@@ -26,7 +26,7 @@ import DialSlider from '@src/components/DialSlider';
 import HistoryVine, { EntryInspectSheet, LadybugToggle, LadybugIcon, type HistoryVineHandle } from '@src/components/HistoryVine';
 import MemoryModal from '@src/components/MemoryModal';
 import FlashbackModal from '@src/components/FlashbackModal';
-import StalkSwitcher from '@src/components/StalkSwitcher';
+import BranchHeader from '@src/components/BranchHeader';
 import ScanBeanCapture from '@src/components/capture/ScanBeanCapture';
 import TypeBeanCapture from '@src/components/capture/TypeBeanCapture';
 import VoiceBeanCapture from '@src/components/capture/VoiceBeanCapture';
@@ -34,7 +34,7 @@ import PhotoBeanCapture from '@src/components/capture/PhotoBeanCapture';
 import { setAudioModeAsync } from 'expo-audio';
 import * as Haptics from 'expo-haptics';
 import { useAuth, useUser } from '@clerk/expo';
-import AccountMenu, { accountInitial, avatarKind, AccountAvatarGlyph, type AvatarKind } from '@src/components/AccountMenu';
+import { accountInitial, avatarKind, AccountAvatarGlyph, type AvatarKind } from '@src/components/AccountMenu';
 import { insertBean, updateBean, deleteBean, syncLocalBeanToCloud, deleteBeanFromCloud, fetchRandomPastBean } from '@src/database';
 import { LocalAiEngine } from '@src/ai/pipeline';
 import { useBeans } from '@src/hooks/useBeans';
@@ -207,7 +207,9 @@ interface GardenLayerProps {
   gardenVisible: boolean;
   accountInitial: string;
   accountKind: AvatarKind;
+  branchName: string;
   onOpenAccount: () => void;
+  onBackToTree: () => void;
   onFabPress: () => void;
   onPressBean: (bean: Bean) => void;
   isSearchActive: boolean;
@@ -217,7 +219,6 @@ interface GardenLayerProps {
   onSearchToggle: () => void;
   onSearchChange: (q: string) => void;
   onToggleFavorites: () => void;
-  onStalkMenuOpen: () => void;
   onFlashback: () => void;
   vineRef: React.Ref<HistoryVineHandle>;
 }
@@ -229,7 +230,9 @@ function GardenLayer({
   gardenVisible,
   accountInitial,
   accountKind,
+  branchName,
   onOpenAccount,
+  onBackToTree,
   onFabPress,
   onPressBean,
   isSearchActive,
@@ -239,7 +242,6 @@ function GardenLayer({
   onSearchToggle,
   onSearchChange,
   onToggleFavorites,
-  onStalkMenuOpen,
   onFlashback,
   vineRef,
 }: GardenLayerProps) {
@@ -294,8 +296,8 @@ function GardenLayer({
         </TouchableOpacity>
       )}
 
-      {/* Stalk selector — floats over the top of the vine */}
-      <StalkSwitcher onOpen={onStalkMenuOpen} />
+      {/* Branch header — tap to return to the tree */}
+      {gardenVisible && <BranchHeader name={branchName} biome={biome} onBack={onBackToTree} />}
 
       {/* Search toggle button — top-right, beside the StalkSwitcher pill.
           Hidden during capture so it can't overlap the Soil controls. */}
@@ -417,14 +419,21 @@ function GardenLayer({
  *   From Soil   → swipe UP slides it up & away; swipe DOWN sinks it back down
  *   Both dismiss directions reveal the Garden.
  */
-export default function MainContainer() {
+interface MainContainerProps {
+  /** Return to the Tree home (this branch is one limb of the tree). */
+  onBackToTree: () => void;
+  /** Open the shared account menu (owned by RootShell). */
+  onOpenAccount: () => void;
+}
+
+export default function MainContainer({ onBackToTree, onOpenAccount }: MainContainerProps) {
   // Clerk-verified user ID — guaranteed non-null here because RootGate only
   // renders MainContainer when isSignedIn === true.
   const { userId } = useAuth();
   const { user } = useUser();
 
-  // Active stalk + its biome theme drive data loading and the entire canvas.
-  const { activeStalkId, biome } = useStalk();
+  // Active stalk (branch) + its biome theme drive data loading and the canvas.
+  const { activeStalkId, activeStalk, biome } = useStalk();
 
   const { beans, loading, refresh } = useBeans(activeStalkId);
 
@@ -432,7 +441,6 @@ export default function MainContainer() {
   // so a shake only recalls a memory while the user is viewing the garden.
   const [gardenVisible, setGardenVisible] = useState(true);
   const [inspectedBean, setInspectedBean] = useState<Bean | null>(null);
-  const [accountMenuOpen, setAccountMenuOpen] = useState(false);
 
   // ── Search state ─────────────────────────────────────────────────────────
   const [isSearchActive, setIsSearchActive] = useState(false);
@@ -721,7 +729,9 @@ export default function MainContainer() {
           gardenVisible={gardenVisible}
           accountInitial={accountInitial(user)}
           accountKind={avatarKind(user)}
-          onOpenAccount={() => { closeSearch(); setAccountMenuOpen(true); }}
+          branchName={activeStalk?.name ?? 'Branch'}
+          onOpenAccount={() => { closeSearch(); onOpenAccount(); }}
+          onBackToTree={onBackToTree}
           onFabPress={openSoil}
           onPressBean={setInspectedBean}
           isSearchActive={isSearchActive}
@@ -731,7 +741,6 @@ export default function MainContainer() {
           onSearchToggle={handleSearchToggle}
           onSearchChange={setSearchQuery}
           onToggleFavorites={() => setFavoritesOnly(v => !v)}
-          onStalkMenuOpen={closeSearch}
           onFlashback={revealFlashback}
           vineRef={vineRef}
         />
@@ -774,13 +783,6 @@ export default function MainContainer() {
           onClose={() => setFlashbackBean(null)}
           onToggleFavorite={handleFlashbackFavorite}
           onJumpToBean={handleJumpToBean}
-        />
-
-        {/* Account menu — personal info, log out, delete account */}
-        <AccountMenu
-          visible={accountMenuOpen}
-          biome={biome}
-          onClose={() => setAccountMenuOpen(false)}
         />
       </View>
     </GestureDetector>

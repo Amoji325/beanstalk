@@ -8,5 +8,5 @@
       "@src/*": ["src/*"]
     }
   },
-  "exclude": ["supabase"]
+  "exclude": ["supabase", "**/__tests__/**", "**/*.test.ts", "**/*.test.tsx"]
 }

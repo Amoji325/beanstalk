@@ -1,6 +1,6 @@
 {
   "expo": {
-    "name": "Beanstalk",
+    "name": "Branch",
     "slug": "Beanstalk",
     "version": "1.0.0",
     "orientation": "portrait",
@@ -38,7 +38,7 @@
       [
         "expo-image-picker",
         {
-          "photosPermission": "Beanstalk accesses your photo library so you can add images and scanned pages to your diary."
+          "photosPermission": "Branch accesses your photo library so you can add images and scanned pages to your memories."
         }
       ],
       "@clerk/expo",
@@ -47,7 +47,7 @@
       [
         "react-native-document-scanner-plugin",
         {
-          "cameraPermission": "Beanstalk uses the camera to scan your handwritten journal pages into clean, readable images."
+          "cameraPermission": "Branch uses the camera to scan your handwritten journal pages into clean, readable images."
         }
       ]
     ],

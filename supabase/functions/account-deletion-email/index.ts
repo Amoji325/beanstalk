@@ -17,7 +17,7 @@
 import { serve } from 'https://deno.land/std@0.203.0/http/server.ts';
 
 const RESEND_API_KEY = Deno.env.get('RESEND_API_KEY');
-const FROM_EMAIL = Deno.env.get('ACCOUNT_EMAIL_FROM') ?? 'Beanstalk <noreply@example.com>';
+const FROM_EMAIL = Deno.env.get('ACCOUNT_EMAIL_FROM') ?? 'Branch <noreply@example.com>';
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -55,10 +55,10 @@ serve(async (req) => {
       body: JSON.stringify({
         from: FROM_EMAIL,
         to: [email],
-        subject: 'Your Beanstalk account has been deleted',
+        subject: 'Your Branch account has been deleted',
         html:
           `<p>${greeting}</p>` +
-          `<p>This confirms that your Beanstalk account and all of its data have been ` +
+          `<p>This confirms that your Branch account and all of its data have been ` +
           `permanently deleted. This action cannot be undone.</p>` +
           `<p>If you did not request this, please contact support immediately.</p>`,
       }),

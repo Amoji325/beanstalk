@@ -5,7 +5,7 @@ import { GestureHandlerRootView } from 'react-native-gesture-handler';
 import { StatusBar } from 'expo-status-bar';
 import { ActivityIndicator, View } from 'react-native';
 import { StalkProvider } from './src/context/StalkContext';
-import MainContainer from './src/screens/MainContainer';
+import RootShell from './src/screens/RootShell';
 import AuthNavigator from './src/screens/auth/AuthNavigator';
 import { tokenCache } from './src/utils/tokenCache';
 
@@ -38,7 +38,7 @@ function RootGate() {
   return (
     <StalkProvider>
       <StatusBar style="light" />
-      <MainContainer />
+      <RootShell />
     </StalkProvider>
   );
 }
